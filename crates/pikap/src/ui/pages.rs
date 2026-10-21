@@ -780,4 +780,21 @@ mod tests {
             "the dot itself keeps its colour"
         );
     }
+
+    /// Without kitty graphics, surfaces turn into cell backgrounds.
+    #[test]
+    fn surfaces_become_backgrounds_without_graphics() {
+        let mut app = App::new(Lang::En, Mode::Dark, crate::data::demo(), None);
+        app.graphics = false;
+        let mut terminal = Terminal::new(TestBackend::new(150, 40)).unwrap();
+        terminal
+            .draw(|f| drop(super::super::render(f, &app, CellPx { w: 8, h: 16 }, false)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let tag = (0..150)
+            .map(|x| &buffer[(x, 38)])
+            .find(|c| c.symbol() == "g")
+            .expect("the g tag on the status line");
+        assert_ne!(tag.bg, ratatui::style::Color::Reset, "the tag is filled");
+    }
 }

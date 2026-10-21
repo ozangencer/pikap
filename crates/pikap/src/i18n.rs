@@ -164,6 +164,7 @@ pub struct Strings {
     pub stage: &'static str,
     pub stage_exit: &'static str,
     pub on_hold: &'static str,
+    pub no_graphics: &'static str,
     pub setup_intro: &'static str,
     pub setup_steps: [&'static str; 4],
     pub setup_prompt: &'static str,
@@ -346,6 +347,7 @@ pub static TR: Strings = Strings {
     stage: "sahne",
     stage_exit: "⌫ / esc çık",
     on_hold: "Spotify şu an bunu kabul etmiyor (istek sınırı), sonra tekrar dene.",
+    no_graphics: "Bu terminal görselleri gösteremiyor (kitty graphics); kapak ve plak için Ghostty, kitty ya da WezTerm.",
     setup_intro: "pikap kendi Spotify Developer uygulamanı kullanır (Spotify ortak bir anahtar vermiyor). Panel tarayıcıda açılıyor:",
     setup_steps: [
         "Bir uygulama oluştur; ad ve açıklama serbest. API'lerden Web API'yi işaretle.",
@@ -529,6 +531,7 @@ pub static EN: Strings = Strings {
     stage: "stage",
     stage_exit: "⌫ / esc leave",
     on_hold: "Spotify is not accepting this right now (rate limit); try again later.",
+    no_graphics: "This terminal cannot show images (kitty graphics); for the cover and the record, try Ghostty, kitty or WezTerm.",
     setup_intro: "pikap uses a Spotify Developer app of your own (Spotify offers no shared key). The dashboard is opening in your browser:",
     setup_steps: [
         "Create an app; any name and description. Under APIs, tick Web API.",

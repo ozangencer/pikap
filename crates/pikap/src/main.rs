@@ -6,6 +6,7 @@ mod i18n;
 mod kitty;
 mod log;
 mod spotify;
+mod term;
 mod theme;
 mod ui;
 
@@ -27,13 +28,15 @@ use theme::Mode;
 const FRAME: Duration = Duration::from_millis(50);
 
 const USAGE: &str =
-    "pikap [auth [--force]] [--lang tr|en] [--theme auto|dark|light] [--demo] [--version]
+    "pikap [auth [--force]] [--lang tr|en] [--theme auto|dark|light] [--demo] [--check-terminal] [--version]
 
   auth     set up and sign in to Spotify (opens the browser): the Web API and librespot
   --force  with auth: sign in again even when already connected
   --lang   UI language (default: PIKAP_LANG, then the system locale)
   --theme  colours for a dark or light terminal (default: PIKAP_THEME, then auto)
-  --demo   show the built-in sample screen instead of Spotify";
+  --demo   show the built-in sample screen instead of Spotify
+  --check-terminal  tell whether this terminal can show pikap's images (kitty graphics);
+           PIKAP_GRAPHICS=on|off overrides the answer";
 
 #[derive(Default)]
 struct Args {
@@ -62,6 +65,18 @@ fn parse_args() -> Result<Args> {
                     "auto" => None,
                     _ => Some(Mode::parse(&v).ok_or_else(|| anyhow!("--theme: {v}?"))?),
                 };
+            }
+            "--check-terminal" => {
+                ratatui::crossterm::terminal::enable_raw_mode()?;
+                let shows = term::graphics_enabled();
+                ratatui::crossterm::terminal::disable_raw_mode()?;
+                let program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+                if shows {
+                    println!("{program}: kitty graphics yes, pikap shows images");
+                } else {
+                    println!("{program}: kitty graphics no, pikap runs as text only");
+                }
+                std::process::exit(0);
             }
             "-V" | "--version" => {
                 println!("pikap {}", env!("CARGO_PKG_VERSION"));
@@ -116,7 +131,13 @@ fn main() -> Result<()> {
 
     let mut terminal = ratatui::init();
     let mode = args.theme.unwrap_or_else(Mode::detect);
-    let result = run(&mut terminal, App::new(lang, mode, model, live));
+    let graphics = term::graphics_enabled();
+    let mut app = App::new(lang, mode, model, live);
+    app.graphics = graphics;
+    if !graphics {
+        app.notice = Some(s.no_graphics.to_owned());
+    }
+    let result = run(&mut terminal, app, graphics);
     let _ = kitty::delete_all(terminal.backend_mut());
     ratatui::restore();
     result
@@ -208,7 +229,9 @@ fn start_worker(api: Arc<Api>) -> Result<Live> {
     Ok(Live { commands, updates })
 }
 
-fn run(terminal: &mut DefaultTerminal, mut app: App) -> Result<()> {
+/// `graphics` is false in terminals without kitty graphics, which would print the
+/// image data as text: nothing is sent to them and titles stay text.
+fn run(terminal: &mut DefaultTerminal, mut app: App, graphics: bool) -> Result<()> {
     let mut gallery = Gallery::new(None);
     let mut kitty = Kitty::default();
     let mut last_size = None;
@@ -233,12 +256,12 @@ fn run(terminal: &mut DefaultTerminal, mut app: App) -> Result<()> {
             .unwrap_or_default();
 
         let cell = CellPx::detect();
-        let title_as_image = gallery.has_title_font();
+        let title_as_image = graphics && gallery.has_title_font();
         let mut slots = None;
         terminal.draw(|f| slots = Some(ui::render(f, &app, cell, title_as_image)))?;
-        if let Some(slots) = slots {
-            let graphics = gallery.graphics(&slots, cell, &title, app.p());
-            kitty.sync(terminal.backend_mut(), &graphics)?;
+        if let Some(slots) = slots.filter(|_| graphics) {
+            let images = gallery.graphics(&slots, cell, &title, app.p());
+            kitty.sync(terminal.backend_mut(), &images)?;
         }
 
         if event::poll(FRAME)? {

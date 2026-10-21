@@ -57,7 +57,29 @@ pub fn render(f: &mut Frame, app: &App, cell: CellPx, title_as_image: bool) -> S
     if fits {
         pages::popup(f, app, &mut slots);
     }
+    if !app.graphics {
+        paint_surfaces(f, app, &slots);
+    }
     slots
+}
+
+/// Without kitty graphics there is no halo to keep visible, so the surfaces (the
+/// selection, tags, panels) are painted as cell backgrounds, blended over the theme's
+/// own background.
+fn paint_surfaces(f: &mut Frame, app: &App, slots: &Slots) {
+    let base: [u8; 3] = match app.mode {
+        crate::theme::Mode::Dark => [10, 20, 24],
+        crate::theme::Mode::Light => [246, 249, 249],
+    };
+    let area = f.area();
+    for &(rect, [r, g, b, a]) in &slots.surfaces {
+        let alpha = f32::from(a) / 255.0;
+        let mix =
+            |c: u8, under: u8| (f32::from(c) * alpha + f32::from(under) * (1.0 - alpha)) as u8;
+        let colour = ratatui::style::Color::Rgb(mix(r, base[0]), mix(g, base[1]), mix(b, base[2]));
+        f.buffer_mut()
+            .set_style(rect.intersection(area), Style::new().bg(colour));
+    }
 }
 
 /// The playing track. Only called from layouts `render` picks when something plays.

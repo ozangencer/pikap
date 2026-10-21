@@ -52,6 +52,9 @@ pub struct App {
     pub popup: Option<Popup>,
     /// Stage mode (`z`): the whole screen for the playing track.
     pub stage: bool,
+    /// The terminal shows kitty graphics; without them surfaces become cell
+    /// backgrounds.
+    pub graphics: bool,
     pub s: &'static Strings,
     pub mode: Mode,
     pub tab: usize,
@@ -114,6 +117,7 @@ impl App {
             search: SearchView::default(),
             popup: None,
             stage: false,
+            graphics: true,
             s: lang.strings(),
             mode,
             tab: 0,

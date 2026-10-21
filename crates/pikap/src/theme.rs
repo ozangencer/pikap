@@ -2,10 +2,6 @@
 //! should show the halo keep the default background; only opaque surfaces
 //! (selection, panels, tags) set one.
 
-use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
-use std::time::{Duration, Instant};
-
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -216,36 +212,9 @@ pub fn contrast(a: f32, b: f32) -> f32 {
 /// Relative luminance of the terminal background from an OSC 11 reply, if the terminal
 /// answers within half a second. A DA1 request follows so silent terminals still reply.
 fn query_background_luma() -> Option<f32> {
-    let mut out = std::io::stdout();
-    out.write_all(b"\x1b]11;?\x1b\\\x1b[c").ok()?;
-    out.flush().ok()?;
-
-    let stdin = std::io::stdin();
-    let fd = stdin.as_raw_fd();
-    let deadline = Instant::now() + Duration::from_millis(500);
-    let mut reply = Vec::new();
-    while Instant::now() < deadline {
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: `pfd` is a valid pollfd for the duration of the call.
-        if unsafe { libc::poll(&mut pfd, 1, 50) } <= 0 {
-            continue;
-        }
-        let mut buf = [0u8; 256];
-        let n = stdin.lock().read(&mut buf).ok()?;
-        reply.extend_from_slice(&buf[..n]);
-        let text = String::from_utf8_lossy(&reply);
-        if text
-            .rfind("\x1b[?")
-            .is_some_and(|i| text[i..].contains('c'))
-        {
-            break;
-        }
-    }
-    parse_osc11(&String::from_utf8_lossy(&reply))
+    parse_osc11(&String::from_utf8_lossy(&crate::term::ask(
+        b"\x1b]11;?\x1b\\",
+    )))
 }
 
 fn parse_osc11(reply: &str) -> Option<f32> {

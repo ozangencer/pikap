@@ -48,9 +48,10 @@ Every colour comes from the album cover that is playing.
 
 - **macOS**. pikap talks to Spotify.app and the system (volume, focus) through macOS
   tools.
-- A **terminal with kitty graphics**. pikap is developed in
-  Muxy; Ghostty and kitty speak the same protocol. Without it you
-  get the text interface only.
+- A **terminal with kitty graphics** for the cover, the halo and the record: tested in
+  Ghostty and Muxy; kitty and WezTerm speak the same protocol. Other terminals
+  (Terminal.app, for example) get the same interface without the images.
+  `pikap --check-terminal` tells which one you have.
 - **Spotify Premium** (Spotify only allows remote control with Premium).
 
 ## Install
