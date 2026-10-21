@@ -29,10 +29,20 @@ while the music plays.
 - A `g` key panel for getting around, a narrow layout for side panes, light and dark
   themes, English and Turkish.
 
+## Beside your editor
+
+The narrow layout fits a side pane, so the music sits next to your work: here pikap
+runs beside Claude Code, with the `g` panel open.
+
+<p align="center"><img src="docs/sidebar.png" alt="pikap in a side pane next to Claude Code" width="900"></p>
+
 | | |
 |---|---|
-| ![Now playing](docs/home.png) | ![Artist page](docs/artist.png) |
-| ![Library](docs/library.png) | ![Stage mode](docs/stage.png) |
+| ![Now playing](docs/home.png) | ![Artist page with the discography](docs/artist.png) |
+| ![Adding a track to a playlist](docs/playlist.png) | ![Moving playback to another device](docs/devices.png) |
+| ![Stage mode](docs/stage.png) | ![Library](docs/library.png) |
+
+Every colour comes from the album cover that is playing.
 
 ## Requirements
 
