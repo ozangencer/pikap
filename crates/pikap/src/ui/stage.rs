@@ -184,7 +184,7 @@ fn karaoke(f: &mut Frame, app: &App, area: Rect, title_as_image: bool, slots: &m
         height: BIG_LINE,
         ..area
     };
-    let big_text = match current.map(&words) {
+    let big_text = match current.map(words) {
         Some(w) if w != "♪" => w,
         _ => REST.to_owned(),
     };
