@@ -1,0 +1,29 @@
+[package]
+name = "pikap"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.88"
+description = "A Spotify remote for the terminal: album art, synced lyrics, a turning record"
+authors = ["Ozan Gençer"]
+repository = "https://github.com/ozangencer/pikap"
+readme = "../../README.md"
+keywords = ["spotify", "tui", "terminal", "music", "ratatui"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[dependencies]
+ab_glyph = "0.2"
+anyhow = "1"
+base64 = "0.22"
+futures-util = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+libc = "0.2"
+librespot-core = "0.8"
+librespot-metadata = "0.8"
+ratatui = "0.30"
+reqwest = { version = "0.13", features = ["json", "form"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+toml = "1"
