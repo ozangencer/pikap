@@ -29,12 +29,16 @@ while the music plays.
 - A `g` key panel for getting around, a narrow layout for side panes, light and dark
   themes, English and Turkish.
 
-## Beside your editor
+## Beside your coding agents
 
-The narrow layout fits a side pane, so the music sits next to your work: here pikap
-runs beside Claude Code, with the `g` panel open.
+The narrow layout fits a side pane, so the music sits next to your work: here beside
+Codex and Claude Code,
 
-<p align="center"><img src="docs/sidebar.png" alt="pikap in a side pane next to Claude Code" width="900"></p>
+<p align="center"><img src="docs/agents.png" alt="pikap in a pane next to Codex and Claude Code" width="900"></p>
+
+or next to all of them at once (OpenCode, Claude Code, Codex, Antigravity):
+
+<p align="center"><img src="docs/agents-all.png" alt="pikap in a side pane beside OpenCode, Claude Code, Codex and Antigravity" width="900"></p>
 
 | | |
 |---|---|
