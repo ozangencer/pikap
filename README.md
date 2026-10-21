@@ -42,46 +42,44 @@ while the music plays.
   Muxy; Ghostty and kitty speak the same protocol. Without it you
   get the text interface only.
 - **Spotify Premium** (Spotify only allows remote control with Premium).
-- Rust 1.88 or newer to build it.
 
 ## Install
 
 ```sh
-cargo install --locked --git https://github.com/ozangencer/pikap pikap
+brew install ozangencer/tap/pikap
 ```
+
+Or build it from source with Rust 1.88 or newer:
+`cargo install --locked --git https://github.com/ozangencer/pikap pikap`.
 
 ## Set up Spotify
 
-pikap uses your own Spotify Developer app, so its requests count against your own
-quota and nobody else's.
+```sh
+pikap auth
+```
 
-1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   and create an app. Any name works. Under *Which API/SDKs are you planning to use*,
-   tick **Web API**.
+The first time, `pikap auth` opens the Spotify Developer Dashboard and walks you
+through it. Spotify gives every user their own app (there is no shared key), so the
+requests count against your own quota and nobody else's:
+
+1. Create an app; any name and description. Under APIs, tick **Web API**.
 2. Add this **Redirect URI** exactly: `http://127.0.0.1:8989/login`
-3. In *User Management*, add the e-mail of your Spotify account (apps in
+3. In *Settings → User Management*, add the e-mail of your Spotify account (apps in
    Development Mode only work for listed users).
-4. Copy the app's **Client ID** into `~/.config/pikap/config.toml`:
+4. Paste the app's **Client ID** when `pikap auth` asks for it. It is saved to
+   `~/.config/pikap/config.toml`.
 
-   ```toml
-   client_id = "your-client-id"
-   ```
+Then the browser opens twice to sign in: once for the Web API (your app) and once
+for Spotify's metadata service (artists, albums, radio, lyrics), which pikap reaches
+through [librespot](https://github.com/librespot-org/librespot) the way other
+librespot players do. Tokens are kept in `~/.cache/pikap/`, readable only by you.
 
-   [`config.example.toml`](config.example.toml) shows the other settings, including
-   the links that make your Made For You playlists appear in the library.
-5. Sign in:
+Start Spotify.app (or have any Connect device online) and run `pikap`. With nothing
+playing, `↵` resumes where you left off.
 
-   ```sh
-   pikap auth
-   ```
-
-   The browser opens twice: once for the Web API (your app) and once for Spotify's
-   metadata service (artists, albums, radio, lyrics), which pikap reaches through
-   [librespot](https://github.com/librespot-org/librespot) the way other librespot
-   players do. Tokens are kept in `~/.cache/pikap/`, readable only by you.
-
-Then start Spotify.app (or have any Connect device online) and run `pikap`. With
-nothing playing, `↵` resumes where you left off.
+Spotify's personal playlists (Discover Weekly, Daily Mixes, Release Radar) cannot be
+listed through the Web API; paste their share links into `made_for_you` in the config
+to see them in the library ([`config.example.toml`](config.example.toml)).
 
 ## Keys
 

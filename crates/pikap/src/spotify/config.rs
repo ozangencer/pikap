@@ -39,8 +39,43 @@ pub fn cache_dir() -> PathBuf {
     home().join(".cache/pikap")
 }
 
+pub fn path() -> PathBuf {
+    config_dir().join("config.toml")
+}
+
+/// A Spotify Client ID: 32 hexadecimal characters.
+pub fn valid_client_id(id: &str) -> bool {
+    id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Saves `client_id` for `pikap auth`'s setup: a new config from the template, or
+/// the line put in front of an existing file that lacks it.
+pub fn save_client_id(client_id: &str) -> Result<PathBuf> {
+    let path = path();
+    write_client_id(&path, client_id)?;
+    Ok(path)
+}
+
+fn write_client_id(path: &std::path::Path, client_id: &str) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let line = format!("client_id = \"{client_id}\"\n");
+    let text = match std::fs::read_to_string(path) {
+        Ok(existing) => format!("{line}{existing}"),
+        Err(_) => format!(
+            "{line}redirect_uri = \"{DEFAULT_REDIRECT_URI}\"\n\n\
+             # Share links of Spotify's personal playlists (Discover Weekly, Daily Mixes, Release\n\
+             # Radar); the Web API cannot list them.\n\
+             made_for_you = []\n"
+        ),
+    };
+    std::fs::write(path, text)?;
+    Ok(())
+}
+
 pub fn load() -> Result<Config> {
-    let path = config_dir().join("config.toml");
+    let path = path();
     let text = std::fs::read_to_string(&path).with_context(|| {
         format!(
             "{} is missing; create it with `client_id = \"...\"` from your Spotify Developer app",
@@ -60,4 +95,34 @@ pub fn load() -> Result<Config> {
         made_for_you: file.made_for_you,
         source: path,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_writes_or_completes_the_config() {
+        let dir = std::env::temp_dir().join(format!("pikap-config-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let id = "0123456789abcdef0123456789abcdef";
+        assert!(valid_client_id(id));
+        assert!(!valid_client_id("not-an-id"));
+
+        write_client_id(&path, id).unwrap();
+        let file: File = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(file.client_id.as_deref(), Some(id));
+        assert_eq!(file.redirect_uri.as_deref(), Some(DEFAULT_REDIRECT_URI));
+
+        std::fs::write(&path, "made_for_you = [\"x\"]\n").unwrap();
+        write_client_id(&path, id).unwrap();
+        let file: File = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            file.client_id.as_deref(),
+            Some(id),
+            "added in front of what was there"
+        );
+        assert_eq!(file.made_for_you, ["x"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -26,9 +26,10 @@ use theme::Mode;
 /// ~20 fps keeps the equalizer smooth; ratatui only redraws cells that changed.
 const FRAME: Duration = Duration::from_millis(50);
 
-const USAGE: &str = "pikap [auth [--force]] [--lang tr|en] [--theme auto|dark|light] [--demo]
+const USAGE: &str =
+    "pikap [auth [--force]] [--lang tr|en] [--theme auto|dark|light] [--demo] [--version]
 
-  auth     sign in to Spotify (opens the browser): the Web API and librespot
+  auth     set up and sign in to Spotify (opens the browser): the Web API and librespot
   --force  with auth: sign in again even when already connected
   --lang   UI language (default: PIKAP_LANG, then the system locale)
   --theme  colours for a dark or light terminal (default: PIKAP_THEME, then auto)
@@ -61,6 +62,10 @@ fn parse_args() -> Result<Args> {
                     "auto" => None,
                     _ => Some(Mode::parse(&v).ok_or_else(|| anyhow!("--theme: {v}?"))?),
                 };
+            }
+            "-V" | "--version" => {
+                println!("pikap {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
             }
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -96,6 +101,10 @@ fn main() -> Result<()> {
     let (model, live) = if args.demo {
         (data::demo(), None)
     } else {
+        if !config::path().exists() {
+            eprintln!("{}", s.need_auth);
+            std::process::exit(1);
+        }
         let cfg = config::load()?;
         let Some(token) = auth::load_token() else {
             eprintln!("{}", s.need_auth);
@@ -116,7 +125,13 @@ fn main() -> Result<()> {
 /// `pikap auth`: the user's Developer app for the Web API, then Spotify's desktop client
 /// for librespot. Each step is skipped when already connected, unless `force`.
 fn sign_in(s: &Strings, force: bool) -> Result<()> {
-    let cfg = config::load()?;
+    let cfg = match config::load() {
+        Ok(cfg) => cfg,
+        Err(_) => {
+            setup(s)?;
+            config::load()?
+        }
+    };
     println!("{}", (s.using_config)(&cfg.source.display().to_string()));
     let announce = |url: &str| {
         println!("\n{}\n{url}\n", s.auth_open);
@@ -146,6 +161,36 @@ fn sign_in(s: &Strings, force: bool) -> Result<()> {
         "\n{}",
         (s.auth_done)(&auth::token_path().display().to_string())
     );
+    Ok(())
+}
+
+/// First run: walks through creating the Spotify Developer app pikap needs and saves
+/// its Client ID, so nobody has to write the config file by hand.
+fn setup(s: &Strings) -> Result<()> {
+    use std::io::Write;
+    const DASHBOARD: &str = "https://developer.spotify.com/dashboard";
+    println!("{}\n  {DASHBOARD}\n", s.setup_intro);
+    for (i, step) in s.setup_steps.iter().enumerate() {
+        println!("  {}. {step}", i + 1);
+    }
+    println!();
+    let _ = std::process::Command::new("open").arg(DASHBOARD).status();
+    let client_id = loop {
+        print!("{}", s.setup_prompt);
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let id = line.trim();
+        if id.is_empty() {
+            bail!("{}", s.setup_cancel);
+        }
+        if config::valid_client_id(id) {
+            break id.to_owned();
+        }
+        println!("{}", s.setup_invalid);
+    };
+    let path = config::save_client_id(&client_id)?;
+    println!("{}", (s.setup_saved)(&path.display().to_string()));
     Ok(())
 }
 
