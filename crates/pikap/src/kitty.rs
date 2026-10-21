@@ -60,11 +60,14 @@ pub struct Graphic {
     pub visible: bool,
 }
 
+/// Where a placement was put: cells, layer and source rectangle.
+type Placed = (Rect, i32, Option<[u32; 4]>);
+
 #[derive(Default)]
 pub struct Kitty {
     /// Content key and PNG size of every image sent.
     sent: HashMap<u32, (u64, usize)>,
-    placed: HashMap<(u32, u32), (Rect, i32)>,
+    placed: HashMap<(u32, u32), Placed>,
     last_resend: Option<Instant>,
 }
 
@@ -135,7 +138,7 @@ impl Kitty {
             if !g.visible {
                 continue;
             }
-            if self.placed.get(&slot) != Some(&(g.rect, g.z)) {
+            if self.placed.get(&slot) != Some(&(g.rect, g.z, g.crop)) {
                 let crop = g
                     .crop
                     .map(|[x, y, cw, ch]| format!(",x={x},y={y},w={cw},h={ch}"))
@@ -151,7 +154,7 @@ impl Kitty {
                     g.rect.height,
                     g.z
                 )?;
-                self.placed.insert(slot, (g.rect, g.z));
+                self.placed.insert(slot, (g.rect, g.z, g.crop));
             }
         }
         w.flush()

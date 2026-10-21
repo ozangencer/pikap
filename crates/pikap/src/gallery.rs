@@ -103,6 +103,8 @@ pub struct Slots {
     pub label_frame: usize,
     /// The current lyric, drawn large.
     pub lyric: Option<(Rect, String)>,
+    /// An open popup: artwork sits above text, so it is cut away around this.
+    pub hole: Rect,
 }
 
 impl Slots {
@@ -290,6 +292,12 @@ impl Gallery {
             });
         }
         out.retain(|g| !g.png.is_empty());
+        if !slots.hole.is_empty() {
+            out = out
+                .into_iter()
+                .flat_map(|g| cut_out(g, slots.hole))
+                .collect();
+        }
 
         let mut used: HashMap<u32, u32> = HashMap::new();
         for (layer, &(rect, rgba)) in slots.surfaces.iter().enumerate() {
@@ -323,6 +331,57 @@ impl Gallery {
         }
         out
     }
+}
+
+/// Artwork above text overlapping `hole` becomes up to four placements around it
+/// (above, below, left, right), each showing its own part of the image.
+fn cut_out(g: Graphic, hole: Rect) -> Vec<Graphic> {
+    let r = g.rect;
+    if g.z < Z_ART || !g.visible || !r.intersects(hole) {
+        return vec![g];
+    }
+    let Some((iw, ih)) = png_size(&g.png) else {
+        return Vec::new();
+    };
+    let [cx, cy, cw, ch] = g.crop.unwrap_or([0, 0, iw, ih]);
+    let middle = r.intersection(hole);
+    let pieces = [
+        Rect::new(r.x, r.y, r.width, middle.y - r.y),
+        Rect::new(r.x, middle.bottom(), r.width, r.bottom() - middle.bottom()),
+        Rect::new(r.x, middle.y, middle.x - r.x, middle.height),
+        Rect::new(
+            middle.right(),
+            middle.y,
+            r.right() - middle.right(),
+            middle.height,
+        ),
+    ];
+    let scale =
+        |from: u16, at: u16, span: u16, px: u32| u32::from(at - from) * px / u32::from(span.max(1));
+    pieces
+        .into_iter()
+        .enumerate()
+        .filter(|(_, piece)| !piece.is_empty())
+        .map(|(k, piece)| {
+            let x0 = scale(r.x, piece.x, r.width, cw);
+            let x1 = scale(r.x, piece.right(), r.width, cw);
+            let y0 = scale(r.y, piece.y, r.height, ch);
+            let y1 = scale(r.y, piece.bottom(), r.height, ch);
+            Graphic {
+                placement: g.placement + k as u32 * 1000,
+                rect: piece,
+                crop: Some([cx + x0, cy + y0, (x1 - x0).max(1), (y1 - y0).max(1)]),
+                png: g.png.clone(),
+                ..g
+            }
+        })
+        .collect()
+}
+
+/// Width and height from a PNG's header.
+fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    let be = |at: usize| Some(u32::from_be_bytes(png.get(at..at + 4)?.try_into().ok()?));
+    Some((be(16)?, be(20)?))
 }
 
 /// Scales a pixel size down so its longer side is at most `max`.
@@ -370,5 +429,55 @@ fn cached(
         png,
         crop: None,
         visible: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn png(w: u32, h: u32) -> Arc<Vec<u8>> {
+        Arc::new(art::png(&RgbaImage::new(w, h)))
+    }
+
+    #[test]
+    fn popups_cut_artwork_away() {
+        let cover = Graphic {
+            id: COVER,
+            placement: 1,
+            rect: Rect::new(0, 0, 20, 10),
+            z: Z_ART,
+            key: 1,
+            png: png(200, 100),
+            crop: None,
+            visible: true,
+        };
+        // The popup covers the cover's lower right corner.
+        let pieces = cut_out(cover, Rect::new(10, 5, 30, 30));
+        let parts: Vec<_> = pieces.iter().map(|g| (g.rect, g.crop)).collect();
+        assert_eq!(
+            parts,
+            [
+                (Rect::new(0, 0, 20, 5), Some([0, 0, 200, 50])),
+                (Rect::new(0, 5, 10, 5), Some([0, 50, 100, 50])),
+            ]
+        );
+        assert_ne!(pieces[0].placement, pieces[1].placement);
+
+        let halo = Graphic {
+            id: HALO,
+            placement: 1,
+            rect: Rect::new(0, 0, 20, 10),
+            z: crate::kitty::Z_HALO,
+            key: 1,
+            png: png(2, 2),
+            crop: None,
+            visible: true,
+        };
+        assert_eq!(
+            cut_out(halo, Rect::new(10, 5, 30, 30)).len(),
+            1,
+            "under text"
+        );
     }
 }

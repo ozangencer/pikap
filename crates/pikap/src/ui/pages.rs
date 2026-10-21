@@ -556,6 +556,7 @@ fn frame(
     // Surfaces of the page underneath would show through the panel.
     slots.surfaces.retain(|(r, _)| !r.intersects(area));
     slots.cards.retain(|(r, _)| !r.intersects(area));
+    slots.hole = area;
     f.render_widget(Clear, area);
     slots.fill(area, p.panel);
     let block = Block::bordered().border_style(p.line());
