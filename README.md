@@ -40,7 +40,7 @@ runs beside Claude Code, with the `g` panel open.
 |---|---|
 | ![Now playing](docs/home.png) | ![Artist page with the discography](docs/artist.png) |
 | ![Adding a track to a playlist](docs/playlist.png) | ![Moving playback to another device](docs/devices.png) |
-| ![Stage mode](docs/stage.png) | ![Library](docs/library.png) |
+| ![Stage mode](docs/stage.png) | ![Library, with Made For You found by itself](docs/library.png) |
 
 Every colour comes from the album cover that is playing.
 
