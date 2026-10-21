@@ -65,8 +65,8 @@ fn write_client_id(path: &std::path::Path, client_id: &str) -> Result<()> {
         Ok(existing) => format!("{line}{existing}"),
         Err(_) => format!(
             "{line}redirect_uri = \"{DEFAULT_REDIRECT_URI}\"\n\n\
-             # Share links of Spotify's personal playlists (Discover Weekly, Daily Mixes, Release\n\
-             # Radar); the Web API cannot list them.\n\
+             # Optional: Made For You lists appear by themselves once played; share links\n\
+             # here show ones you have not played yet.\n\
              made_for_you = []\n"
         ),
     };

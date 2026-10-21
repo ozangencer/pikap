@@ -19,8 +19,8 @@ while the music plays.
   sleeve, the record slid out and turning, the current line karaoke style.
 - **Artist pages**: popular tracks, the songs you liked, every album and single as a
   grid of covers, related artists.
-- **Library**: Made For You, liked songs, recently played, your playlists and saved
-  albums. **Search** across tracks, albums, artists and playlists at once.
+- **Library**: Made For You (found by itself), liked songs, recently played, your
+  playlists and saved albums. **Search** across tracks, albums, artists and playlists at once.
 - **Playlists**: add the selected track to one of your playlists (`a`), remove it
   (`x`), add it to the queue (`e`).
 - **Queue** (`g k`) and **devices** (`g d`): jump ahead in the queue, move playback
@@ -77,9 +77,11 @@ librespot players do. Tokens are kept in `~/.cache/pikap/`, readable only by you
 Start Spotify.app (or have any Connect device online) and run `pikap`. With nothing
 playing, `↵` resumes where you left off.
 
-Spotify's personal playlists (Discover Weekly, Daily Mixes, Release Radar) cannot be
-listed through the Web API; paste their share links into `made_for_you` in the config
-to see them in the library ([`config.example.toml`](config.example.toml)).
+Your Made For You lists (Discover Weekly, Release Radar, Daily Mixes) appear in the
+library on their own once you have played them: Spotify's Web API cannot list them, so
+pikap recognises them among what you play. Nothing to set up. To add one you have
+never played, you can paste its share link into `made_for_you` in the config
+(optional, see [`config.example.toml`](config.example.toml)).
 
 ## Keys
 

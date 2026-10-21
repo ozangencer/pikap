@@ -161,6 +161,12 @@ pub enum Update {
     },
 }
 
+#[derive(Default)]
+struct MadeForYou {
+    entries: Vec<Entry>,
+    checked: std::collections::HashSet<String>,
+}
+
 /// librespot session plus page caches, shared by the spawned metadata tasks.
 #[derive(Default)]
 struct Library {
@@ -170,6 +176,8 @@ struct Library {
     radios: Mutex<HashMap<String, Arc<ListPage>>>,
     /// Where each recently played track was played from.
     recent_contexts: Mutex<HashMap<String, String>>,
+    /// Made For You lists found so far, and every playlist already looked at for it.
+    made_for_you: tokio::sync::Mutex<MadeForYou>,
     lists: Mutex<HashMap<String, Arc<ListPage>>>,
     /// Liked songs, refreshed from the Web API once per run; the disk copy shows first.
     liked: tokio::sync::Mutex<Option<Arc<Vec<TrackInfo>>>>,
@@ -421,7 +429,8 @@ async fn library_index(api: &Api, user: String, saved: Option<&LibraryIndex>) ->
         }
         saved
     };
-    let made_for_you: Vec<Entry> = api
+    // The configured lists, then the ones pikap found itself on earlier runs.
+    let mut made_for_you: Vec<Entry> = api
         .config()
         .made_for_you
         .iter()
@@ -432,6 +441,11 @@ async fn library_index(api: &Api, user: String, saved: Option<&LibraryIndex>) ->
                 .unwrap_or_else(|| Entry::new(Kind::Playlist, uri, ""))
         })
         .collect();
+    for entry in saved.iter().flat_map(|s| &s.made_for_you) {
+        if !made_for_you.iter().any(|e| e.uri == entry.uri) {
+            made_for_you.push(entry.clone());
+        }
+    }
     let playlists = match all_pages::<Playlist>(api, "me/playlists").await {
         Ok(lists) => lists
             .into_iter()
@@ -699,6 +713,38 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
                 index.made_for_you = named;
                 write_library(&index);
             }
+            {
+                let mut found = library.made_for_you.lock().await;
+                found
+                    .checked
+                    .extend(index.made_for_you.iter().map(|e| e.uri.clone()));
+                found
+                    .checked
+                    .extend(index.playlists.iter().map(|e| e.uri.clone()));
+                // Keep any list found while startup was still naming the others.
+                let earlier = std::mem::replace(&mut found.entries, index.made_for_you.clone());
+                for entry in earlier {
+                    if !found.entries.iter().any(|e| e.uri == entry.uri) {
+                        found.entries.push(entry);
+                    }
+                }
+            }
+            // Made For You lists cannot be listed; the ones played lately show who they are.
+            match api
+                .get::<Recent>("me/player/recently-played?limit=50")
+                .await
+            {
+                Ok(recent) => {
+                    let played = recent
+                        .into_iter()
+                        .flat_map(|r| r.items)
+                        .filter_map(|h| h.context)
+                        .filter(|c| c.kind == "playlist")
+                        .map(|c| c.uri);
+                    learn_made_for_you(&library, &ui, played.collect()).await;
+                }
+                Err(err) => plog!("made for you from recently played: {err:#}"),
+            }
         });
     }
 
@@ -756,6 +802,12 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
                         if context.as_ref().map(|c| &c.uri) != current_context.as_ref() {
                             current_context = context.as_ref().map(|c| c.uri.clone());
                             if let Some(c) = context {
+                                if c.kind == "playlist" {
+                                    let (library, ui, uri) = (library.clone(), ui.clone(), c.uri.clone());
+                                    tokio::spawn(async move {
+                                        learn_made_for_you(&library, &ui, vec![uri]).await;
+                                    });
+                                }
                                 spawn_context(&api, &library, &ui, &c.kind, c.uri);
                             }
                         }
@@ -975,15 +1027,69 @@ async fn name_made_for_you(
     let meta = library.meta().await?;
     for entry in &mut entries {
         match meta.playlist_summary(&entry.uri).await {
-            Ok((name, count)) => {
-                entry.title = name;
-                entry.count = Some(count);
+            Ok(summary) => {
+                entry.title = summary.name;
+                entry.count = Some(summary.count);
+                entry.sub = summary.format;
             }
             Err(err) => plog!("made for you {}: {err}", entry.uri),
         }
     }
+    sort_made_for_you(&mut entries);
     let _ = ui.send(Update::MadeForYou(entries.clone()));
     Some(entries)
+}
+
+/// Looks at playlists not seen before and keeps the Made For You ones: in the
+/// library, in `library.json`, and on screen. Each playlist is looked at once.
+async fn learn_made_for_you(library: &Library, ui: &Sender<Update>, candidates: Vec<String>) {
+    let mut found = library.made_for_you.lock().await;
+    let fresh: Vec<String> = candidates
+        .into_iter()
+        .filter(|uri| found.checked.insert(uri.clone()))
+        .collect();
+    if fresh.is_empty() {
+        return;
+    }
+    let Some(meta) = library.meta().await else {
+        return;
+    };
+    let mut learned = false;
+    for uri in fresh {
+        match meta.playlist_summary(&uri).await {
+            Ok(summary) if summary.made_for_you => {
+                plog!("made for you: found {} ({})", summary.name, summary.format);
+                found.entries.push(Entry {
+                    count: Some(summary.count),
+                    sub: summary.format,
+                    ..Entry::new(Kind::Playlist, uri, summary.name)
+                });
+                learned = true;
+            }
+            Ok(_) => {}
+            Err(err) => plog!("made for you {uri}: {err}"),
+        }
+    }
+    if !learned {
+        return;
+    }
+    sort_made_for_you(&mut found.entries);
+    if let Some(mut saved) = read_library() {
+        saved.made_for_you = found.entries.clone();
+        write_library(&saved);
+    }
+    let _ = ui.send(Update::MadeForYou(found.entries.clone()));
+}
+
+/// Discover Weekly, Release Radar, the Daily Mixes, then the rest, each by name.
+fn sort_made_for_you(entries: &mut [Entry]) {
+    let rank = |format: &str| match format {
+        "discover-weekly" => 0,
+        "release-radar" => 1,
+        "daily-mix" => 2,
+        _ => 3,
+    };
+    entries.sort_by(|a, b| (rank(&a.sub), &a.title).cmp(&(rank(&b.sub), &b.title)));
 }
 
 async fn resume(
@@ -1399,6 +1505,33 @@ mod tests {
         assert_eq!(parse_volume_settings(text), Some(31));
         let muted = "output volume:31, input volume:50, alert volume:100, output muted:true";
         assert_eq!(parse_volume_settings(muted), Some(0));
+    }
+
+    #[test]
+    fn made_for_you_order() {
+        let entry = |title: &str, format: &str| Entry {
+            sub: format.into(),
+            ..Entry::new(Kind::Playlist, title, title)
+        };
+        let mut lists = vec![
+            entry("Daily Mix 2", "daily-mix"),
+            entry("On Repeat", "on-repeat"),
+            entry("Daily Mix 1", "daily-mix"),
+            entry("Release Radar", "release-radar"),
+            entry("Discover Weekly", "discover-weekly"),
+        ];
+        sort_made_for_you(&mut lists);
+        let titles: Vec<&str> = lists.iter().map(|e| e.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Discover Weekly",
+                "Release Radar",
+                "Daily Mix 1",
+                "Daily Mix 2",
+                "On Repeat"
+            ]
+        );
     }
 
     #[test]

@@ -105,6 +105,18 @@ pub struct AlbumPage {
     pub tracks: Vec<TrackInfo>,
 }
 
+/// What a playlist is, without its tracks.
+pub struct PlaylistSummary {
+    pub name: String,
+    pub count: usize,
+    /// Spotify's kind for generated lists: `discover-weekly`, `daily-mix`,
+    /// `release-radar`, `inspiredby-mix` (radio), `liked-songs`; empty for others.
+    pub format: String,
+    /// Made For You: personal lists Spotify generates for the user (not radios, not
+    /// the liked songs mirror).
+    pub made_for_you: bool,
+}
+
 pub struct LyricLine {
     pub start: Duration,
     pub words: String,
@@ -423,15 +435,26 @@ impl Meta {
         })
     }
 
-    /// A playlist's name and track count, without loading its tracks.
-    pub async fn playlist_summary(&self, uri: &str) -> Result<(String, usize)> {
+    /// A playlist's name, track count and kind, without loading its tracks.
+    pub async fn playlist_summary(&self, uri: &str) -> Result<PlaylistSummary> {
         let id = SpotifyUri::from_uri(uri)?;
         let playlist = patiently(|| async {
             self.pace().await;
             Playlist::get(&self.session, &id).await
         })
         .await?;
-        Ok((playlist.name().to_owned(), playlist.tracks().count()))
+        let attributes = &playlist.attributes;
+        let marks = &attributes.format_attributes.0;
+        let made_for = marks.contains_key("madeFor.username")
+            || marks.get("madeFor.displayed").is_some_and(|v| v == "1");
+        let format = attributes.format.clone();
+        Ok(PlaylistSummary {
+            name: playlist.name().to_owned(),
+            count: playlist.tracks().count(),
+            made_for_you: made_for
+                && !matches!(format.as_str(), "" | "inspiredby-mix" | "liked-songs"),
+            format,
+        })
     }
 
     /// Spotify no longer fills `related` in artist metadata; the other artists in the
@@ -622,6 +645,36 @@ mod live {
                     "{seed} -> {:?}",
                     meta.radio_playlist(seed).await.map_err(|e| e.to_string())
                 );
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod live_made_for_you {
+    /// `cargo test --release -- --ignored --nocapture made_for_you_rule` (needs `pikap auth`).
+    #[test]
+    #[ignore = "talks to Spotify"]
+    fn made_for_you_rule() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let meta = super::Meta::connect().await.unwrap();
+            for (id, expected) in [
+                ("37i9dQZEVXcUMx7ZNCmeo4", true),  // Discover Weekly
+                ("37i9dQZF1E36c3f87B1Xo0", true),  // Daily Mix 1
+                ("37i9dQZF1E8Qck6xJNqYNR", false), // a song radio
+                ("37i9dQZF1F5p3rmiWPIYgZ", false), // the liked songs mirror
+                ("4YHyPgWnKhhfJ9SqX6s4LU", false), // an ordinary playlist
+            ] {
+                let summary = meta
+                    .playlist_summary(&format!("spotify:playlist:{id}"))
+                    .await
+                    .unwrap();
+                println!(
+                    "{} ({}): {}",
+                    summary.name, summary.format, summary.made_for_you
+                );
+                assert_eq!(summary.made_for_you, expected, "{}", summary.name);
             }
         });
     }

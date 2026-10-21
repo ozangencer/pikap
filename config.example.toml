@@ -6,8 +6,8 @@ client_id = "your-client-id"
 # Must be registered on that app exactly as written here.
 redirect_uri = "http://127.0.0.1:8989/login"
 
-# Spotify's personal playlists (Discover Weekly, Daily Mixes, Release Radar) cannot be
-# listed through the Web API. Paste their share links to see them in the library.
+# Optional. Made For You lists (Discover Weekly, Daily Mixes, Release Radar) appear in
+# the library by themselves once played; list here any you want to see before that.
 made_for_you = [
     # "https://open.spotify.com/playlist/37i9dQZEVXcXXXXXXXXXXX",
 ]
