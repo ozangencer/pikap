@@ -1,4 +1,4 @@
-# pikap
+<h1 align="center"><img src="docs/logo.png" alt="pikap: music beside your coding agents" width="800"></h1>
 
 A Spotify remote for the terminal. pikap does not play audio itself: it drives
 Spotify.app (or any Spotify Connect device) and gives the terminal the album art,
