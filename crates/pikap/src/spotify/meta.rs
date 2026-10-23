@@ -128,13 +128,9 @@ pub struct LyricsPage {
 }
 
 fn cache() -> Result<Cache> {
-    Cache::new(
-        Some(config::cache_dir().join("librespot")),
-        None,
-        None,
-        None,
-    )
-    .map_err(|e| anyhow!("librespot cache: {e}"))
+    let dir = config::cache_dir().join("librespot");
+    private_dir(&dir)?;
+    Cache::new(Some(dir), None, None, None).map_err(|e| anyhow!("librespot cache: {e}"))
 }
 
 fn session_config() -> SessionConfig {
@@ -157,6 +153,19 @@ pub async fn store_credentials(access_token: String) -> Result<()> {
         .context("librespot sign-in")?;
     session.shutdown();
     restrict_credentials();
+    Ok(())
+}
+
+/// librespot creates its directory and credentials with the default umask, so the
+/// directory is made private before librespot writes anything into it.
+fn private_dir(dir: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 

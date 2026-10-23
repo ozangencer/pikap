@@ -215,46 +215,70 @@ fn loopback_addr(redirect_uri: &str) -> Result<SocketAddr> {
 }
 
 /// Waits for the redirect carrying `code`. Browsers prefetch `/favicon.ico` and the like
-/// from the same port, so any request without a code is answered and ignored.
+/// from the same port, and any web page or local process can reach the port too, so
+/// only a request carrying our `state` is acted on; everything else is answered and
+/// ignored.
 fn wait_for_code(addr: SocketAddr, state: &str) -> Result<String> {
     let listener = TcpListener::bind(addr).with_context(|| format!("listening on {addr}"))?;
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
+        // A client that never finishes its request line must not stall the sign-in.
+        let _ = stream.set_read_timeout(Some(CALLBACK_READ_TIMEOUT));
         let mut line = String::new();
         if BufReader::new(&stream).read_line(&mut line).is_err() {
             continue;
         }
         let target = line.split_whitespace().nth(1).unwrap_or_default();
-        let Ok(url) = reqwest::Url::parse(&format!("http://localhost{target}")) else {
-            continue;
-        };
-        let param = |name: &str| {
-            url.query_pairs()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.into_owned())
-        };
-        if let Some(error) = param("error") {
-            respond(
-                &mut stream,
-                "pikap: Spotify izin vermedi / authorization was denied.",
-            );
-            bail!("Spotify denied the authorization: {error}");
+        match callback(target, state) {
+            Callback::Code(code) => {
+                respond(
+                    &mut stream,
+                    "pikap: giriş tamam, bu sekmeyi kapatabilirsin. / Signed in, you can close this tab.",
+                );
+                return Ok(code);
+            }
+            Callback::Denied(error) => {
+                respond(
+                    &mut stream,
+                    "pikap: Spotify izin vermedi / authorization was denied.",
+                );
+                bail!("Spotify denied the authorization: {error}");
+            }
+            Callback::Ignored => respond(&mut stream, ""),
         }
-        let Some(code) = param("code") else {
-            respond(&mut stream, "");
-            continue;
-        };
-        if param("state").as_deref() != Some(state) {
-            respond(&mut stream, "pikap: state mismatch, ignored.");
-            continue;
-        }
-        respond(
-            &mut stream,
-            "pikap: giriş tamam, bu sekmeyi kapatabilirsin. / Signed in, you can close this tab.",
-        );
-        return Ok(code);
     }
     bail!("callback listener closed")
+}
+
+const CALLBACK_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug, PartialEq)]
+enum Callback {
+    Code(String),
+    /// Spotify's `error`, with control characters removed: it is printed to the
+    /// terminal, where an escape sequence would be interpreted.
+    Denied(String),
+    Ignored,
+}
+
+/// Reads the callback's request target. Without our `state` neither `code` nor
+/// `error` counts, so another page cannot end the sign-in.
+fn callback(target: &str, state: &str) -> Callback {
+    let Ok(url) = reqwest::Url::parse(&format!("http://localhost{target}")) else {
+        return Callback::Ignored;
+    };
+    let param = |name: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.into_owned())
+    };
+    if param("state").as_deref() != Some(state) {
+        return Callback::Ignored;
+    }
+    if let Some(error) = param("error") {
+        return Callback::Denied(error.chars().filter(|c| !c.is_control()).take(80).collect());
+    }
+    param("code").map_or(Callback::Ignored, Callback::Code)
 }
 
 fn respond(stream: &mut std::net::TcpStream, body: &str) {
@@ -271,4 +295,35 @@ fn random_url_safe(len: usize) -> Result<String> {
     let mut s = URL_SAFE_NO_PAD.encode(bytes);
     s.truncate(len);
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callbacks_need_our_state() {
+        assert_eq!(
+            callback("/login?code=abc&state=s1", "s1"),
+            Callback::Code("abc".into())
+        );
+        assert_eq!(
+            callback("/login?code=abc&state=other", "s1"),
+            Callback::Ignored
+        );
+        assert_eq!(
+            callback("/login?error=x", "s1"),
+            Callback::Ignored,
+            "another page cannot end the sign-in"
+        );
+        assert_eq!(callback("/favicon.ico", "s1"), Callback::Ignored);
+        assert_eq!(
+            callback(
+                "/login?error=access_denied%1B%5D52%3Bc%3Bx%07&state=s1",
+                "s1"
+            ),
+            Callback::Denied("access_denied]52;c;x".into()),
+            "no escape sequences reach the terminal"
+        );
+    }
 }
