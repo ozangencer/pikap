@@ -782,6 +782,40 @@ mod tests {
         );
     }
 
+    /// The narrow layout follows the tab keys instead of always showing the list.
+    #[test]
+    fn narrow_layout_shows_the_chosen_tab() {
+        use crate::spotify::meta::{LyricLine, LyricsPage};
+        let screen = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(70, 50)).unwrap();
+            terminal
+                .draw(|f| drop(super::super::render(f, app, CellPx { w: 8, h: 16 }, false)))
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..50)
+                .map(|y| (0..70).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut app = App::new(Lang::En, Mode::Dark, crate::data::demo(), None);
+        app.model.lyrics = Some(Some(Arc::new(LyricsPage {
+            synced: false,
+            lines: vec![LyricLine {
+                start: std::time::Duration::ZERO,
+                words: "la la lyric line".into(),
+            }],
+        })));
+        let first = app.list_rows()[0].title.clone();
+        assert!(screen(&app).contains(&first), "starts on the list");
+        press(&mut app, "gL");
+        let lyrics = screen(&app);
+        assert!(lyrics.contains("la la lyric line"), "g L shows the lyrics");
+        assert!(!lyrics.contains(&first), "the list is gone");
+        app.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.tab, 0);
+        assert!(screen(&app).contains(&first), "← goes back to the list");
+    }
+
     /// Without kitty graphics, surfaces turn into cell backgrounds.
     #[test]
     fn surfaces_become_backgrounds_without_graphics() {

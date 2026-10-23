@@ -272,21 +272,23 @@ fn compact(f: &mut Frame, app: &App, title_as_image: bool, slots: &mut Slots) {
     f.render_widget(meta_line, meta);
     wave_and_times(f, app, wave);
 
+    // The tab keys (g L, ←/→, 1-5) work here too, so the tab line and its body follow
+    // them; the list tab keeps its tight, artist-less rows.
     if list.height > 1 {
-        f.render_widget(styled(app.s.tabs[0], p.muted()), row(list, 0));
-        let rows = Rect {
-            y: list.y + 1,
-            height: list.height - 1,
-            ..list
-        };
-        track_rows(
-            f,
-            app,
-            rows,
-            &app.list_rows(),
-            &home_list(app, false),
-            slots,
-        );
+        tabs_line(f, app, row(list, 0));
+        let body = below(list, 1);
+        if app.tab == 0 && app.home_open.is_none() {
+            track_rows(
+                f,
+                app,
+                body,
+                &app.list_rows(),
+                &home_list(app, false),
+                slots,
+            );
+        } else {
+            tab_body(f, app, body, slots);
+        }
     }
 
     if app.leader {
