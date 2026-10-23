@@ -40,6 +40,10 @@ or next to all of them at once (OpenCode, Claude Code, Codex, Antigravity):
 
 <p align="center"><img src="docs/agents-all.png" alt="pikap in a side pane beside OpenCode, Claude Code, Codex and Antigravity" width="900"></p>
 
+The lyrics fit there too, scrolling with the song while an agent works:
+
+<p align="center"><img src="docs/agents-lyrics.png" alt="pikap showing synced lyrics in a side pane while Claude Code adds a --fahrenheit flag" width="900"></p>
+
 | | |
 |---|---|
 | ![Now playing](docs/home.png) | ![Artist page with the discography](docs/artist.png) |
