@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::{album_color, fit, row, styled, wave_and_times};
+use super::{album_color, fit, heart, pinned_line, row, styled, wave_and_times};
 use crate::app::App;
 use crate::art::LABEL_SHARE;
 use crate::gallery::Slots;
@@ -62,19 +62,20 @@ pub(super) fn stage(f: &mut Frame, app: &App, title_as_image: bool, slots: &mut 
     };
     karaoke(f, app, lyrics_area, title_as_image, slots);
 
-    let mut meta = vec![
-        Span::styled(
-            now.title.as_str(),
-            Style::new().fg(p.bright).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ·  ", p.muted()),
-        Span::styled(now.artist.as_str(), p.accent()),
-        Span::styled(format!("  ·  {}", now.album), p.muted()),
-    ];
-    if now.liked {
-        meta.push(Span::styled("  ♥", Style::new().fg(p.like)));
-    }
-    f.render_widget(Line::from(meta), row(bottom, 0));
+    pinned_line(
+        f,
+        row(bottom, 0),
+        vec![
+            Span::styled(
+                now.title.as_str(),
+                Style::new().fg(p.bright).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ·  ", p.muted()),
+            Span::styled(now.artist.as_str(), p.accent()),
+            Span::styled(format!("  ·  {}", now.album), p.muted()),
+        ],
+        vec![heart(app, now.liked)],
+    );
     wave_and_times(
         f,
         app,

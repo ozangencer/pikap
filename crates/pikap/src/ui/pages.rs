@@ -12,8 +12,8 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::{
     COLUMN_GAP, COMPACT_LEADER_HEIGHT, LEADER_HEIGHT, ListState, WIDE_MIN, below, fit, header_line,
-    leader_panel, queue_header, row, scroll, status_line, styled, title_text, track_rows,
-    wave_and_times,
+    heart, leader_panel, pinned_line, queue_header, row, scroll, status_line, styled, title_text,
+    track_rows, wave_and_times,
 };
 use crate::app::{App, Opened, Page, Popup};
 use crate::data::{Entry, Kind, Track};
@@ -159,15 +159,20 @@ fn now_column(
 /// The narrow layout's one-line "now playing".
 fn now_line(f: &mut Frame, app: &App, area: Rect) {
     let p = app.p();
-    let line = match &app.model.now {
-        Some(now) => Line::from(vec![
+    let Some(now) = &app.model.now else {
+        f.render_widget(styled(app.s.nothing_playing, p.muted()), area);
+        return;
+    };
+    pinned_line(
+        f,
+        area,
+        vec![
             Span::styled(if app.playing { "▶ " } else { "▌▌ " }, p.accent()),
             Span::styled(now.title.as_str(), p.text().add_modifier(Modifier::BOLD)),
             Span::styled(format!(" · {}", now.artist), p.muted()),
-        ]),
-        None => styled(app.s.nothing_playing, p.muted()),
-    };
-    f.render_widget(line, area);
+        ],
+        vec![heart(app, now.liked)],
+    );
 }
 
 /// Collections on the left, the opened list on the right; one pane when narrow.
@@ -814,6 +819,46 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         assert_eq!(app.tab, 0);
         assert!(screen(&app).contains(&first), "← goes back to the list");
+    }
+
+    /// Pressing `f` shows on every narrow line, however long the track's names are.
+    #[test]
+    fn like_state_stays_at_the_right_edge() {
+        let check = |keys: &str, w: u16, margin: u16, needle: &str, tail: &str| {
+            let mut app = demo_app();
+            let now = app.model.now.as_mut().unwrap();
+            now.title = "Title ".repeat(30);
+            now.artist = "Artist ".repeat(30);
+            press(&mut app, keys);
+            let heart_row = |app: &App, heart: &str| {
+                let mut terminal = Terminal::new(TestBackend::new(w, 40)).unwrap();
+                terminal
+                    .draw(|f| drop(super::super::render(f, app, CellPx { w: 8, h: 16 }, false)))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let expected = format!("{heart}{tail}");
+                let hit = (0..40)
+                    .map(|y| {
+                        let text: String =
+                            (0..w).map(|x| buffer[(x, y)].symbol().to_owned()).collect();
+                        (y, text.trim_end().to_owned())
+                    })
+                    .find(|(_, text)| text.contains(needle) && text.ends_with(&expected))
+                    .unwrap_or_else(|| panic!("{keys:?} at {w}: no row ending in {expected}"));
+                assert!(hit.1.contains('…'), "{keys:?} at {w}: the names are cut");
+                let edge = w - margin - 1 - tail.chars().count() as u16;
+                assert_eq!(hit.1.chars().count() as u16, w - margin);
+                assert_eq!(buffer[(edge, hit.0)].fg, app.p().like);
+            };
+            heart_row(&app, "♥");
+            press(&mut app, "f");
+            heart_row(&app, "♡");
+        };
+        check("gl", 52, 2, "Title Title", "");
+        check("/blur\n", 52, 2, "Title Title", "");
+        check("", 52, 2, "Artist Artist", " f");
+        check("z", 52, 3, "Title Title", "");
+        check("z", 150, 3, "Title Title", "");
     }
 
     /// Without kitty graphics, surfaces turn into cell backgrounds.

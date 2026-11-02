@@ -256,20 +256,15 @@ fn compact(f: &mut Frame, app: &App, title_as_image: bool, slots: &mut Slots) {
         title_text(f, app, title);
     }
     let now = now(app);
-    let heart = if now.liked { " ♥" } else { " ♡" };
-    let room = meta
-        .width
-        .saturating_sub(now.artist.chars().count() as u16 + 2);
-    let meta_line = Line::from(vec![
-        Span::styled(now.artist.as_str(), p.accent()),
-        Span::styled(
-            fit(&format!(" · {}", now.album), room.saturating_sub(2)),
-            p.muted(),
-        ),
-        Span::styled(heart, Style::new().fg(p.like)),
-        Span::styled(" f", p.muted()),
-    ]);
-    f.render_widget(meta_line, meta);
+    pinned_line(
+        f,
+        meta,
+        vec![
+            Span::styled(now.artist.as_str(), p.accent()),
+            Span::styled(format!(" · {}", now.album), p.muted()),
+        ],
+        vec![heart(app, now.liked), Span::styled(" f", p.muted())],
+    );
     wave_and_times(f, app, wave);
 
     // The tab keys (g L, ←/→, 1-5) work here too, so the tab line and its body follow
@@ -1009,6 +1004,44 @@ fn fit(s: &str, width: u16) -> String {
     }
     let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
     out.push('…');
+    out
+}
+
+fn heart(app: &App, liked: bool) -> Span<'static> {
+    Span::styled(if liked { "♥" } else { "♡" }, Style::new().fg(app.p().like))
+}
+
+/// One row with `tail` pinned to its right edge and `spans` cut with an ellipsis to the
+/// room left, so a long title cannot push the like state off a narrow pane.
+fn pinned_line(f: &mut Frame, area: Rect, spans: Vec<Span>, tail: Vec<Span>) {
+    let tail = Line::from(tail);
+    let room = area.width.saturating_sub(tail.width() as u16 + 1);
+    f.render_widget(
+        Line::from(fit_spans(spans, room)),
+        Rect {
+            width: room,
+            ..area
+        },
+    );
+    f.render_widget(tail.right_aligned(), area);
+}
+
+/// [`fit`] across spans: each keeps its style, whatever no longer fits is dropped.
+fn fit_spans(spans: Vec<Span>, width: u16) -> Vec<Span> {
+    let mut left = width;
+    let mut out = Vec::new();
+    for span in spans {
+        if left == 0 {
+            break;
+        }
+        let cells = span.content.chars().count() as u16;
+        if cells > left {
+            out.push(Span::styled(fit(&span.content, left), span.style));
+            break;
+        }
+        left -= cells;
+        out.push(span);
+    }
     out
 }
 
