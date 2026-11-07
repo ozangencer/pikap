@@ -30,9 +30,10 @@ use theme::Mode;
 const FRAME: Duration = Duration::from_millis(50);
 
 const USAGE: &str =
-    "pikap [auth [--force]] [--backend spotify|ytmusic] [--lang tr|en] [--theme auto|dark|light] [--demo] [--check-terminal] [--version]
+    "pikap [auth [spotify|ytmusic] [--force]] [--backend spotify|ytmusic] [--lang tr|en] [--theme auto|dark|light] [--demo] [--check-terminal] [--version]
 
-  auth     set up and sign in to Spotify (opens the browser): the Web API and librespot
+  auth     sign in: Spotify (the Web API and librespot, opens the browser) or YouTube
+           Music (optional, adds your library); asks which unless named
   --force  with auth: sign in again even when already connected
   --backend  the music service (default: PIKAP_BACKEND, then spotify); YouTube Music
            plays through mpv and needs mpv and yt-dlp (brew install mpv yt-dlp)
@@ -48,6 +49,8 @@ struct Args {
     force: bool,
     demo: bool,
     ytmusic: bool,
+    /// The service `auth` signs in to, when named.
+    service: Option<backend::Service>,
     lang: Option<Lang>,
     theme: Option<Mode>,
 }
@@ -58,6 +61,15 @@ fn parse_args() -> Result<Args> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "auth" => args.auth = true,
+            "spotify" | "ytmusic" if args.auth => {
+                args.service = backend_is_ytmusic(&arg).map(|ytm| {
+                    if ytm {
+                        backend::Service::YtMusic
+                    } else {
+                        backend::Service::Spotify
+                    }
+                });
+            }
             "--force" => args.force = true,
             "--demo" => args.demo = true,
             "--backend" => {
@@ -111,6 +123,20 @@ fn parse_args() -> Result<Args> {
     Ok(args)
 }
 
+/// `pikap auth` with no service named; Spotify unless the answer is 2.
+fn ask_service(s: &Strings) -> Result<backend::Service> {
+    use std::io::Write;
+    print!("{}", s.auth_which);
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(if line.trim() == "2" {
+        backend::Service::YtMusic
+    } else {
+        backend::Service::Spotify
+    })
+}
+
 fn backend_is_ytmusic(name: &str) -> Option<bool> {
     match name {
         "spotify" => Some(false),
@@ -132,7 +158,15 @@ fn main() -> Result<()> {
     let lang = args.lang.unwrap_or_else(Lang::detect);
     let s = lang.strings();
     if args.auth {
-        return sign_in(s, args.force);
+        let service = match args.service {
+            Some(service) => service,
+            None if args.ytmusic => backend::Service::YtMusic,
+            None => ask_service(s)?,
+        };
+        return match service {
+            backend::Service::Spotify => sign_in(s, args.force),
+            backend::Service::YtMusic => ytmusic::auth::sign_in(s, args.force),
+        };
     }
 
     let (model, live) = if args.demo {

@@ -174,6 +174,27 @@ pub struct Strings {
     pub setup_invalid: &'static str,
     pub setup_cancel: &'static str,
     pub setup_saved: fn(&str) -> String,
+    /// `pikap auth` without a service: which one.
+    pub auth_which: &'static str,
+    pub ytm_intro: &'static str,
+    pub ytm_missing: fn(&str) -> String,
+    pub ytm_checking: &'static str,
+    pub ytm_already: &'static str,
+    pub ytm_expired: &'static str,
+    pub ytm_ask: &'static str,
+    pub ytm_signed_out: &'static str,
+    pub ytm_from: &'static str,
+    pub ytm_paste_option: &'static str,
+    pub ytm_choice: &'static str,
+    pub ytm_reading: fn(&str) -> String,
+    pub ytm_unreadable: fn(&str, &str) -> String,
+    pub ytm_full_disk: fn(&str) -> String,
+    pub ytm_paste_instead: &'static str,
+    pub ytm_paste_steps: [&'static str; 5],
+    pub ytm_paste_prompt: &'static str,
+    pub ytm_paste_invalid: &'static str,
+    pub ytm_not_signed_in: &'static str,
+    pub ytm_done: fn(&str) -> String,
     pub library_held: fn(std::time::Duration) -> String,
     pub already_open: fn(&str) -> String,
 }
@@ -379,6 +400,45 @@ pub static TR: Strings = Strings {
     setup_invalid: "Bu bir Client ID'ye benzemiyor (32 harf ve rakam). Tekrar dene ya da çıkmak için ↵.",
     setup_cancel: "Durduruldu. Client ID'yi aldığında `pikap auth`'u yeniden çalıştır.",
     setup_saved: |path| format!("Kaydedildi: {path}"),
+    auth_which: "Hangi servis?\n  1) Spotify\n  2) YouTube Music\nSeçim [1]: ",
+    ytm_intro: "YouTube Music girişsiz de çalışır: arama, sanatçılar, albümler, radyo ve senkron sözler hazır.\n\
+        Giriş yapınca beğenilenlerin, playlist'lerin, Home ve beğenme de gelir.\n\
+        Ses mpv ile çalar: pikap --backend ytmusic",
+    ytm_missing: |tools| format!("Eksik: {tools}. Kurmak için: brew install {tools}"),
+    ytm_checking: "Giriş doğrulanıyor…",
+    ytm_already: "Zaten giriş yapılı. Yeniden giriş için: pikap auth ytmusic --force",
+    ytm_expired: "Kayıtlı giriş artık geçerli değil (oturum kapanmış olabilir).",
+    ytm_ask: "Giriş yapmak ister misin? [E/h]: ",
+    ytm_signed_out: "Girişsiz devam. Açmak için: pikap --backend ytmusic",
+    ytm_from: "Giriş, YouTube Music'e giriş yaptığın tarayıcıdan alınır:",
+    ytm_paste_option: "çerezi elle yapıştır (izin gerekmez)",
+    ytm_choice: "Seçim [1]: ",
+    ytm_reading: |browser| {
+        format!("{browser} çerezleri okunuyor (macOS bir kez Keychain izni isteyebilir)…")
+    },
+    ytm_unreadable: |browser, err| format!("{browser} çerezleri okunamadı: {err}"),
+    ytm_full_disk: |terminal| {
+        format!(
+            "macOS, terminalin tarayıcı verisini okumasına izin vermiyor. Otomatik giriş için:\n\
+         \x20 Sistem Ayarları › Gizlilik ve Güvenlik › Tam Disk Erişimi › {terminal}'i aç (panel açılıyor),\n\
+         \x20 sonra {terminal}'i yeniden başlatıp şunu çalıştır: pikap auth ytmusic\n\
+         İzin yalnızca giriş anında gerekir; pikap girişi kendi dosyasına kaydeder, izni sonra geri alabilirsin."
+        )
+    },
+    ytm_paste_instead: "Şimdilik çerezi elle yapıştırmak ister misin? [E/h]: ",
+    ytm_paste_steps: [
+        "Tarayıcıda music.youtube.com'u aç (açılıyor), giriş yapılı olsun.",
+        "⌥⌘I ile DevTools'u aç, Network sekmesine geç.",
+        "Sayfada bir yere tıkla (örneğin bir türe), filtreye browse yaz.",
+        "Bir isteğe tıkla: Headers › Request Headers › cookie satırında sağ tık › Copy value.",
+        "Buraya dönüp ↵'a bas; pikap panodan okur.",
+    ],
+    ytm_paste_prompt: "Kopyaladıktan sonra ↵ (vazgeçmek için q): ",
+    ytm_paste_invalid: "Panodaki metin bir YouTube çerezine benzemiyor (SAPISID yok). Tüm cookie değerini kopyala.",
+    ytm_not_signed_in: "Bu çerezle YouTube Music oturum açmadı. music.youtube.com'da giriş yapılı olduğundan emin olup tekrar dene.",
+    ytm_done: |path| {
+        format!("Giriş tamam, kaydedildi: {path}\nAçmak için: pikap --backend ytmusic")
+    },
     library_held: |wait| match wait.as_secs() {
         s if s >= 3600 => format!("Spotify istek sınırı · ~{} sa sonra", s.div_ceil(3600)),
         s => format!("Spotify istek sınırı · ~{} dk sonra", s.div_ceil(60)),
@@ -582,6 +642,43 @@ pub static EN: Strings = Strings {
     setup_invalid: "That does not look like a Client ID (32 letters and digits). Try again, or press ↵ to stop.",
     setup_cancel: "Stopped. Run `pikap auth` again once you have the Client ID.",
     setup_saved: |path| format!("Saved to {path}"),
+    auth_which: "Which service?\n  1) Spotify\n  2) YouTube Music\nChoice [1]: ",
+    ytm_intro: "YouTube Music works without signing in: search, artists, albums, radio and synced lyrics.\n\
+        Signing in adds your liked songs, playlists, Home and liking.\n\
+        Sound plays through mpv: pikap --backend ytmusic",
+    ytm_missing: |tools| format!("Missing: {tools}. To install: brew install {tools}"),
+    ytm_checking: "Checking the sign-in…",
+    ytm_already: "Already signed in. To sign in again: pikap auth ytmusic --force",
+    ytm_expired: "The saved sign-in no longer works (the session may have ended).",
+    ytm_ask: "Sign in? [Y/n]: ",
+    ytm_signed_out: "Going on signed out. To start: pikap --backend ytmusic",
+    ytm_from: "The sign-in comes from the browser you use YouTube Music in:",
+    ytm_paste_option: "paste the cookie by hand (no permission needed)",
+    ytm_choice: "Choice [1]: ",
+    ytm_reading: |browser| {
+        format!("Reading {browser}'s cookies (macOS may ask once for Keychain access)…")
+    },
+    ytm_unreadable: |browser, err| format!("Could not read {browser}'s cookies: {err}"),
+    ytm_full_disk: |terminal| {
+        format!(
+            "macOS does not let the terminal read the browser's data. To sign in automatically:\n\
+         \x20 System Settings › Privacy & Security › Full Disk Access › turn on {terminal} (the pane is opening),\n\
+         \x20 then restart {terminal} and run: pikap auth ytmusic\n\
+         The permission is needed only to sign in; pikap keeps the sign-in in its own file, so you can turn it off after."
+        )
+    },
+    ytm_paste_instead: "Paste the cookie by hand for now? [Y/n]: ",
+    ytm_paste_steps: [
+        "Open music.youtube.com in your browser (it is opening), signed in.",
+        "Open DevTools with ⌥⌘I and go to the Network tab.",
+        "Click something on the page (a genre, say) and type browse into the filter.",
+        "Click a request: Headers › Request Headers › right-click the cookie line › Copy value.",
+        "Come back here and press ↵; pikap reads the clipboard.",
+    ],
+    ytm_paste_prompt: "Once copied, press ↵ (q to stop): ",
+    ytm_paste_invalid: "The clipboard does not hold a YouTube cookie (no SAPISID). Copy the whole cookie value.",
+    ytm_not_signed_in: "YouTube Music did not open an account with this cookie. Make sure you are signed in on music.youtube.com and try again.",
+    ytm_done: |path| format!("Signed in, saved to {path}\nTo start: pikap --backend ytmusic"),
     library_held: |wait| match wait.as_secs() {
         s if s >= 3600 => format!("Spotify rate limit · ~{} h", s.div_ceil(3600)),
         s => format!("Spotify rate limit · ~{} min", s.div_ceil(60)),

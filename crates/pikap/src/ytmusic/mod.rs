@@ -4,6 +4,7 @@
 //! `ytm:track:<videoId>`, `ytm:album:<browseId>`, `ytm:artist:<channelId>` and
 //! `ytm:playlist:<playlistId>` (without the `VL` that browse ids put in front).
 
+pub mod auth;
 pub mod client;
 pub mod lyrics;
 pub mod mpv;

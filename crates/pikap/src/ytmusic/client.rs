@@ -82,6 +82,13 @@ impl Client {
         Ok(serde_json::from_str(&text)?)
     }
 
+    /// Whether the cookie really opened an account: signed out, the library answers
+    /// with a "looking for what you've liked?" message instead of the playlist grid.
+    pub async fn has_account(&self) -> Result<bool> {
+        let library = self.browse("FEmusic_liked_playlists").await?;
+        Ok(library.to_string().contains("\"gridRenderer\""))
+    }
+
     pub async fn browse(&self, id: &str) -> Result<Value> {
         self.call("browse", serde_json::json!({ "browseId": id }))
             .await
