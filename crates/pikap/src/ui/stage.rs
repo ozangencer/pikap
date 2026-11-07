@@ -49,7 +49,7 @@ pub(super) fn stage(f: &mut Frame, app: &App, title_as_image: bool, slots: &mut 
 
     let Some(now) = app.model.now.as_ref() else {
         f.render_widget(
-            styled(app.s.nothing_playing, p.muted()).centered(),
+            styled((app.s.nothing_playing)(app.service), p.muted()).centered(),
             row(main, main.height / 2),
         );
         return;

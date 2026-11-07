@@ -1,6 +1,9 @@
 //! UI strings. Each language is one `Strings` value, so a missing translation is a
-//! compile error. Content that comes from Spotify (playlist names, titles) is never
-//! translated.
+//! compile error. Content that comes from the service (playlist names, titles) is never
+//! translated. Lines that name the service are one per service: Turkish suffixes follow
+//! the name (Spotify'da, YouTube Music'te), so a template would not do.
+
+use crate::backend::Service;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
@@ -91,9 +94,9 @@ pub struct Strings {
     pub screen_missing: fn(char, &str) -> String,
     pub too_small: fn((u16, u16), (u16, u16)) -> String,
     pub theme_now: fn(&str) -> String,
-    pub idle_title: &'static str,
-    pub connecting: &'static str,
-    pub idle_hint: &'static str,
+    pub idle_title: fn(Service) -> &'static str,
+    pub connecting: fn(Service) -> &'static str,
+    pub idle_hint: fn(Service) -> &'static str,
     pub idle_last: fn(&str, &str) -> String,
     pub resume_launching: &'static str,
     pub resume_on: fn(&str) -> String,
@@ -129,7 +132,7 @@ pub struct Strings {
     pub searching: &'static str,
     pub no_results: &'static str,
     pub open_hint: &'static str,
-    pub nothing_playing: &'static str,
+    pub nothing_playing: fn(Service) -> &'static str,
     pub add_title: &'static str,
     pub add_hint: &'static str,
     pub adding: fn(&str, &str) -> String,
@@ -152,7 +155,7 @@ pub struct Strings {
     pub artist_related: &'static str,
     pub single: &'static str,
     pub queue_title: &'static str,
-    pub queue_hint: &'static str,
+    pub queue_hint: fn(Service) -> &'static str,
     pub queue_empty: &'static str,
     pub queued: fn(&str) -> String,
     pub devices_title: &'static str,
@@ -254,9 +257,20 @@ pub static TR: Strings = Strings {
         )
     },
     theme_now: |name| format!("tema: {name}"),
-    idle_title: "Spotify'da şu an çalan bir şey yok",
-    connecting: "Spotify'a bağlanılıyor…",
-    idle_hint: "↵ kaldığın yerden devam et  ·  g l kütüphane  ·  / ara  ·  ya da Spotify'da başlat, pikap yakalar",
+    idle_title: |s| match s {
+        Service::Spotify => "Spotify'da şu an çalan bir şey yok",
+        Service::YtMusic => "YouTube Music'te şu an çalan bir şey yok",
+    },
+    connecting: |s| match s {
+        Service::Spotify => "Spotify'a bağlanılıyor…",
+        Service::YtMusic => "YouTube Music'e bağlanılıyor…",
+    },
+    idle_hint: |s| match s {
+        Service::Spotify => {
+            "↵ kaldığın yerden devam et  ·  g l kütüphane  ·  / ara  ·  ya da Spotify'da başlat, pikap yakalar"
+        }
+        Service::YtMusic => "↵ kaldığın yerden devam et  ·  g l kütüphane  ·  / ara",
+    },
     idle_last: |title, artist| format!("son çalınan: {title} · {artist}"),
     resume_launching: "Spotify açılıyor…",
     resume_on: |device| format!("▶ {device} üzerinde devam ediliyor"),
@@ -291,7 +305,10 @@ pub static TR: Strings = Strings {
     searching: "aranıyor…",
     no_results: "sonuç yok",
     open_hint: "soldan bir liste seç, ↵ ile aç",
-    nothing_playing: "Spotify'da çalan yok",
+    nothing_playing: |s| match s {
+        Service::Spotify => "Spotify'da çalan yok",
+        Service::YtMusic => "YouTube Music'te çalan yok",
+    },
     add_title: " listeye ekle ",
     add_hint: "↵ ekle   esc vazgeç",
     adding: |track, list| format!("“{track}”, {list} listesine ekleniyor…"),
@@ -324,7 +341,10 @@ pub static TR: Strings = Strings {
     artist_related: "benzer",
     single: "single",
     queue_title: " kuyruk ",
-    queue_hint: "↵ buna atla   esc kapat   (Spotify kuyruktan silmeye izin vermiyor)",
+    queue_hint: |s| match s {
+        Service::Spotify => "↵ buna atla   esc kapat   (Spotify kuyruktan silmeye izin vermiyor)",
+        Service::YtMusic => "↵ buna atla   esc kapat",
+    },
     queue_empty: "Çalan bir şey yok, kuyruk boş.",
     queued: |title| format!("“{title}” kuyruğa eklendi"),
     devices_title: " cihaz ",
@@ -445,9 +465,20 @@ pub static EN: Strings = Strings {
         )
     },
     theme_now: |name| format!("theme: {name}"),
-    idle_title: "Nothing is playing on Spotify",
-    connecting: "Connecting to Spotify…",
-    idle_hint: "↵ resume where you left off  ·  g l library  ·  / search  ·  or start in Spotify, pikap picks it up",
+    idle_title: |s| match s {
+        Service::Spotify => "Nothing is playing on Spotify",
+        Service::YtMusic => "Nothing is playing on YouTube Music",
+    },
+    connecting: |s| match s {
+        Service::Spotify => "Connecting to Spotify…",
+        Service::YtMusic => "Connecting to YouTube Music…",
+    },
+    idle_hint: |s| match s {
+        Service::Spotify => {
+            "↵ resume where you left off  ·  g l library  ·  / search  ·  or start in Spotify, pikap picks it up"
+        }
+        Service::YtMusic => "↵ resume where you left off  ·  g l library  ·  / search",
+    },
     idle_last: |title, artist| format!("last played: {title} · {artist}"),
     resume_launching: "Opening Spotify…",
     resume_on: |device| format!("▶ resuming on {device}"),
@@ -488,7 +519,10 @@ pub static EN: Strings = Strings {
     searching: "searching…",
     no_results: "no results",
     open_hint: "pick a list on the left, ↵ opens it",
-    nothing_playing: "Nothing is playing on Spotify",
+    nothing_playing: |s| match s {
+        Service::Spotify => "Nothing is playing on Spotify",
+        Service::YtMusic => "Nothing is playing on YouTube Music",
+    },
     add_title: " add to playlist ",
     add_hint: "↵ add   esc cancel",
     adding: |track, list| format!("adding “{track}” to {list}…"),
@@ -519,7 +553,12 @@ pub static EN: Strings = Strings {
     artist_related: "related",
     single: "single",
     queue_title: " queue ",
-    queue_hint: "↵ jump here   esc close   (Spotify does not allow removing from the queue)",
+    queue_hint: |s| match s {
+        Service::Spotify => {
+            "↵ jump here   esc close   (Spotify does not allow removing from the queue)"
+        }
+        Service::YtMusic => "↵ jump here   esc close",
+    },
     queue_empty: "Nothing is playing, the queue is empty.",
     queued: |title| format!("“{title}” added to the queue"),
     devices_title: " device ",
@@ -619,5 +658,21 @@ mod tests {
         assert_eq!(Lang::parse("tr_TR.UTF-8"), Some(Lang::Tr));
         assert_eq!(Lang::parse("en-TR"), Some(Lang::En));
         assert_eq!(Lang::parse("C"), None);
+    }
+
+    #[test]
+    fn youtube_music_lines_do_not_say_spotify() {
+        for lang in [Lang::Tr, Lang::En] {
+            let s = lang.strings();
+            for line in [
+                s.idle_title,
+                s.connecting,
+                s.idle_hint,
+                s.nothing_playing,
+                s.queue_hint,
+            ] {
+                assert!(!line(Service::YtMusic).contains("Spotify"), "{lang:?}");
+            }
+        }
     }
 }

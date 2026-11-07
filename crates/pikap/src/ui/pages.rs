@@ -95,7 +95,7 @@ fn now_column(
     let Some(now) = app.model.now.as_ref() else {
         let cols = max_cols.min(28);
         f.render_widget(
-            Paragraph::new(app.s.nothing_playing)
+            Paragraph::new((app.s.nothing_playing)(app.service))
                 .style(p.muted())
                 .wrap(Wrap { trim: true }),
             Rect {
@@ -160,7 +160,10 @@ fn now_column(
 fn now_line(f: &mut Frame, app: &App, area: Rect) {
     let p = app.p();
     let Some(now) = &app.model.now else {
-        f.render_widget(styled(app.s.nothing_playing, p.muted()), area);
+        f.render_widget(
+            styled((app.s.nothing_playing)(app.service), p.muted()),
+            area,
+        );
         return;
     };
     pinned_line(
@@ -495,7 +498,7 @@ pub(super) fn popup(f: &mut Frame, app: &App, slots: &mut Slots) {
                 queue.len(),
                 app.s.queue_title,
                 &detail,
-                app.s.queue_hint,
+                (app.s.queue_hint)(app.service),
             );
             let state = ListState {
                 selected: Some(*selected),
@@ -785,6 +788,22 @@ mod tests {
             p.like,
             "the dot itself keeps its colour"
         );
+    }
+
+    /// With nothing playing, the idle screen names the service pikap runs on.
+    #[test]
+    fn idle_screen_names_the_service() {
+        let mut app = App::new(Lang::Tr, Mode::Dark, crate::data::Model::default(), None);
+        app.service = crate::backend::Service::YtMusic;
+        app.synced = true;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|f| drop(super::super::render(f, &app, CellPx { w: 8, h: 16 }, false)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("YouTube Music'te şu an çalan bir şey yok"));
+        assert!(!text.contains("Spotify"));
     }
 
     /// The narrow layout follows the tab keys instead of always showing the list.

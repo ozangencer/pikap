@@ -138,7 +138,7 @@ fn main() -> Result<()> {
     let (model, live) = if args.demo {
         (data::demo(), None)
     } else if args.ytmusic {
-        let live = start_worker("ytmusic", ytmusic::worker::run)?;
+        let live = start_worker(backend::Service::YtMusic, ytmusic::worker::run)?;
         (data::Model::default(), Some(live))
     } else {
         if !config::path().exists() {
@@ -151,7 +151,7 @@ fn main() -> Result<()> {
             std::process::exit(1);
         };
         let api = Arc::new(Api::new(http()?, cfg, token));
-        let live = start_worker("spotify", move |commands, updates| {
+        let live = start_worker(backend::Service::Spotify, move |commands, updates| {
             worker::run(api, commands, updates)
         })?;
         (data::Model::default(), Some(live))
@@ -244,7 +244,7 @@ fn setup(s: &Strings) -> Result<()> {
 }
 
 /// Runs a service's worker on its own thread and runtime; the UI loop stays synchronous.
-fn start_worker<F, Fut>(name: &str, worker: F) -> Result<Live>
+fn start_worker<F, Fut>(service: backend::Service, worker: F) -> Result<Live>
 where
     F: FnOnce(
             tokio::sync::mpsc::UnboundedReceiver<backend::Command>,
@@ -261,9 +261,13 @@ where
         .enable_all()
         .build()?;
     std::thread::Builder::new()
-        .name(name.into())
+        .name(format!("{service:?}").to_lowercase())
         .spawn(move || runtime.block_on(worker(command_rx, update_tx)))?;
-    Ok(Live { commands, updates })
+    Ok(Live {
+        service,
+        commands,
+        updates,
+    })
 }
 
 /// `graphics` is false in terminals without kitty graphics, which would print the

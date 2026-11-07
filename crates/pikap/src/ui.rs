@@ -108,9 +108,9 @@ fn idle(f: &mut Frame, app: &App, slots: &mut Slots) {
     let middle = body.y + body.height / 2;
     let title = Style::new().fg(p.bright).add_modifier(Modifier::BOLD);
     let heading = if app.synced {
-        app.s.idle_title
+        (app.s.idle_title)(app.service)
     } else {
-        app.s.connecting
+        (app.s.connecting)(app.service)
     };
     f.render_widget(
         styled(fit(heading, body.width), title).centered(),
@@ -135,7 +135,7 @@ fn idle(f: &mut Frame, app: &App, slots: &mut Slots) {
         );
     }
     f.render_widget(
-        styled(fit(app.s.idle_hint, body.width), p.muted()).centered(),
+        styled(fit((app.s.idle_hint)(app.service), body.width), p.muted()).centered(),
         Rect {
             y: middle + 3,
             height: 1,

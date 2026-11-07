@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::backend::{Command, ListPage, Playback, Quota, ResumeStage, Update};
+use crate::backend::{Command, ListPage, Playback, Quota, ResumeStage, Service, Update};
 use crate::data::{Model, NowPlaying, Track};
 use crate::i18n::{Lang, Strings};
 use crate::theme::{Mode, Palette};
@@ -33,12 +33,15 @@ pub enum Flow {
 
 /// Channels to the Spotify worker; absent in `--demo`.
 pub struct Live {
+    pub service: Service,
     pub commands: UnboundedSender<Command>,
     pub updates: Receiver<Update>,
 }
 
 pub struct App {
     pub model: Model,
+    /// The service the screen shows; it names itself in a few lines.
+    pub service: Service,
     pub page: Page,
     /// Pages to return to with `⌫`.
     history: Vec<Page>,
@@ -99,6 +102,7 @@ pub struct App {
 impl App {
     pub fn new(lang: Lang, mode: Mode, model: Model, live: Option<Live>) -> Self {
         Self {
+            service: live.as_ref().map_or(Service::Spotify, |l| l.service),
             playing: live.is_none(),
             position: if live.is_none() {
                 Duration::from_secs(88)
@@ -662,7 +666,7 @@ impl App {
         if self.model.now.is_some() {
             self.stage = true;
         } else {
-            self.notice = Some(self.s.nothing_playing.to_owned());
+            self.notice = Some((self.s.nothing_playing)(self.service).to_owned());
         }
     }
 

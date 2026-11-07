@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::data::{Entry, Kind, LibraryIndex, NowPlaying, SearchResults, Track};
 
+/// The music service a backend talks to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Service {
+    #[default]
+    Spotify,
+    YtMusic,
+}
+
 /// Whether a URI names a single track (not an episode, list or heading).
 pub fn is_track(uri: &str) -> bool {
     uri.starts_with("spotify:track:") || uri.starts_with("ytm:track:")
