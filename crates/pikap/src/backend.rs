@@ -213,6 +213,9 @@ pub enum Command {
     Resume {
         fallback: Option<(Option<String>, String)>,
     },
+    /// pikap is closing: a backend that plays the music itself stops it. The sender
+    /// answers once it is done.
+    Quit(std::sync::mpsc::Sender<()>),
 }
 
 pub enum ResumeStage {

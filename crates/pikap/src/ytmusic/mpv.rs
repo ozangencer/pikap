@@ -1,8 +1,10 @@
 //! mpv as the player, driven over its JSON IPC socket.
 //!
 //! pikap makes no sound itself, on YouTube Music as on Spotify: mpv plays, pikap is the
-//! remote. mpv runs in its own process group and outlives pikap, so the music keeps
-//! going when pikap closes and a new pikap finds the same player at the same socket.
+//! remote. Unlike Spotify.app, mpv has no window to stop it from, so it lives with
+//! pikap: quitting pikap quits mpv, and mpv shares pikap's process group, so closing
+//! the terminal pane ends both. Should pikap die without that, the next pikap finds
+//! the same mpv at the same socket and takes over.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -66,9 +68,7 @@ impl Mpv {
             .arg(format!("--input-ipc-server={}", socket.display()))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            // Its own group: closing the terminal pane must not take the music with it.
-            .process_group(0);
+            .stderr(std::process::Stdio::null());
         command
             .spawn()
             .context("mpv is not installed (brew install mpv)")?;

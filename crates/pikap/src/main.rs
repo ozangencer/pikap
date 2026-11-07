@@ -342,7 +342,13 @@ fn run(terminal: &mut DefaultTerminal, mut app: App, graphics: bool) -> Result<(
         if event::poll(FRAME)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match app.on_key(key) {
-                    Flow::Quit => break,
+                    Flow::Quit => {
+                        // YouTube Music plays through mpv: closing pikap stops it.
+                        if let Some(done) = app.shutdown() {
+                            let _ = done.recv_timeout(Duration::from_secs(1));
+                        }
+                        break;
+                    }
                     Flow::Redraw => {
                         kitty.reset(terminal.backend_mut())?;
                         terminal.clear()?;

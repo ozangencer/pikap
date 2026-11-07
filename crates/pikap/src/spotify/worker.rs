@@ -860,6 +860,11 @@ fn handle(
                 edit_playlist(&api, &library, &ui, playlist, track, false).await
             }
             Command::LoadQueue => send_queue(&api, &ui).await,
+            // Spotify.app plays on when pikap closes, as it should.
+            Command::Quit(done) => {
+                let _ = done.send(());
+                Ok(())
+            }
             Command::AddToQueue(track) => {
                 let result = api
                     .send(Method::POST, &format!("me/player/queue?uri={track}"))

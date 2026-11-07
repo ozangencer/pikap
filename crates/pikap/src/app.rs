@@ -522,6 +522,14 @@ impl App {
         }
     }
 
+    /// Tells the backend pikap is closing; the answer comes when it is done.
+    pub fn shutdown(&self) -> Option<std::sync::mpsc::Receiver<()>> {
+        let live = self.live.as_ref()?;
+        let (done, wait) = std::sync::mpsc::channel();
+        live.commands.send(Command::Quit(done)).ok()?;
+        Some(wait)
+    }
+
     fn command(&self, command: Command) {
         if let Some(live) = &self.live {
             let _ = live.commands.send(command);

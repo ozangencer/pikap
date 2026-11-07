@@ -62,6 +62,9 @@ struct Queue {
     /// Tracks added with "add to queue" since the track changed; they line up in order.
     #[serde(skip)]
     added: usize,
+    /// Where the current track stood when pikap closed, in seconds.
+    #[serde(default)]
+    position: f64,
 }
 
 impl Queue {
@@ -95,9 +98,18 @@ struct State {
     mpv: tokio::sync::Mutex<Option<Arc<Mpv>>>,
     events: UnboundedSender<Event>,
     queue: Mutex<Queue>,
+    /// pikap is closing: nothing may start mpv again.
+    quitting: std::sync::atomic::AtomicBool,
+    /// A saved track and where to start it, used by the first play after startup.
+    resume_at: Mutex<Option<(String, f64)>>,
     /// The track mpv was last told to play.
     loaded: Mutex<Option<String>>,
     urls: Mutex<HashMap<String, (String, Instant)>>,
+    /// One resolution per track at a time: a second, simultaneous one makes YouTube
+    /// refuse the address the first one returned.
+    resolving: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// The track already given a fresh address after mpv could not open it.
+    retried: Mutex<Option<String>>,
     /// Every track seen, by URI, for commands that only name one.
     songs: Mutex<HashMap<String, Song>>,
     lists: Mutex<Lists>,
@@ -129,8 +141,12 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         mpv: tokio::sync::Mutex::new(None),
         events,
         queue: Mutex::new(Queue::default()),
+        quitting: std::sync::atomic::AtomicBool::new(false),
+        resume_at: Mutex::new(None),
         loaded: Mutex::new(None),
         urls: Mutex::default(),
+        resolving: Mutex::default(),
+        retried: Mutex::new(None),
         songs: Mutex::default(),
         lists: Mutex::default(),
         artists: Mutex::default(),
@@ -154,6 +170,9 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
             command = commands.recv() => {
                 let Some(command) = command else { break };
                 state.handle(command).await;
+                if state.quitting.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
             }
             Some(event) = event_rx.recv() => state.on_event(event).await,
             _ = tick.tick() => state.send_playback().await,
@@ -184,6 +203,9 @@ impl State {
 
     /// The player, started or found again; `true` when it was already running.
     async fn mpv(&self) -> Result<(Arc<Mpv>, bool)> {
+        if self.quitting.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("pikap is closing");
+        }
         let mut mpv = self.mpv.lock().await;
         if let Some(m) = mpv.as_ref() {
             return Ok((m.clone(), true));
@@ -257,6 +279,11 @@ impl State {
                 Ok(())
             }
             Command::Transfer { .. } => Ok(()),
+            Command::Quit(done) => {
+                self.quit().await;
+                let _ = done.send(());
+                Ok(())
+            }
             Command::AddToQueue(track) => {
                 self.add_to_queue(&track);
                 Ok(())
@@ -419,8 +446,25 @@ impl State {
                 }
             }
             Event::EndFile(reason) if reason == "error" => {
-                plog!("ytmusic: mpv could not play the track, skipping");
-                let _ = self.step(1).await;
+                // Addresses expire or get refused (403): try a fresh one once, then skip.
+                let Some(uri) = self.loaded.lock().ok().and_then(|l| l.clone()) else {
+                    return;
+                };
+                let first_time = self
+                    .retried
+                    .lock()
+                    .map(|mut r| r.replace(uri.clone()).as_deref() != Some(uri.as_str()))
+                    .unwrap_or(false);
+                if let Ok(mut urls) = self.urls.lock() {
+                    urls.remove(&uri);
+                }
+                if first_time {
+                    plog!("ytmusic: mpv could not open {uri}, resolving it again");
+                    self.play_current();
+                } else {
+                    plog!("ytmusic: mpv could not play {uri}, skipping");
+                    let _ = self.step(1).await;
+                }
             }
             Event::Closed => {
                 plog!("ytmusic: mpv quit");
@@ -454,6 +498,7 @@ impl State {
                 repeat: q.repeat,
                 unshuffled: None,
                 added: 0,
+                position: 0.0,
             };
             if shuffle {
                 drop(q);
@@ -487,9 +532,23 @@ impl State {
             if !still {
                 return;
             }
+            let start = state
+                .resume_at
+                .lock()
+                .ok()
+                .and_then(|mut r| r.take())
+                .filter(|(saved, at)| *saved == uri && *at > 1.0)
+                .map(|(_, at)| at);
             let loaded = async {
                 let (mpv, _) = state.mpv().await?;
-                mpv.command(json!(["loadfile", url, "replace"])).await?;
+                let load = match start {
+                    Some(at) => json!(["loadfile", url, "replace", -1, format!("start={at:.1}")]),
+                    None => json!(["loadfile", url, "replace"]),
+                };
+                if mpv.command(load).await.is_err() {
+                    // mpv before 0.38 takes no index argument; start from the top.
+                    mpv.command(json!(["loadfile", url, "replace"])).await?;
+                }
                 mpv.set("pause", json!(false)).await
             };
             if let Err(err) = loaded.await {
@@ -622,12 +681,14 @@ impl State {
             .is_ok_and(|l| l.as_deref() == Some(song.info.uri.as_str()));
         let idle = self.get_bool("idle-active").await.unwrap_or(true);
         let paused = self.get_bool("pause").await.unwrap_or(true);
-        let live = loaded && !idle;
-        let position = if live {
-            self.get_f64("time-pos").await.unwrap_or(0.0)
+        // Right after a load mpv has no position yet: still loading, not playing at 0.
+        let position = if loaded && !idle {
+            self.get_f64("time-pos").await
         } else {
-            0.0
+            None
         };
+        let live = position.is_some();
+        let position = position.unwrap_or(0.0);
         let duration = if live {
             self.get_f64("duration").await
         } else {
@@ -975,6 +1036,14 @@ impl State {
 
     /// The stream address for a track: cached, or asked from yt-dlp.
     async fn stream_url(&self, uri: &str) -> Result<String> {
+        let gate = self
+            .resolving
+            .lock()
+            .map_err(|_| anyhow!("resolver state poisoned"))?
+            .entry(uri.to_owned())
+            .or_default()
+            .clone();
+        let _one_at_a_time = gate.lock().await;
         if let Some((url, at)) = self.urls.lock().ok().and_then(|u| u.get(uri).cloned())
             && at.elapsed() < URL_LIFE
         {
@@ -1165,6 +1234,27 @@ impl State {
         }
     }
 
+    /// pikap is closing: remember where the track stands, then stop mpv.
+    async fn quit(&self) {
+        self.quitting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let Some(mpv) = self.mpv.lock().await.clone() else {
+            return;
+        };
+        let live = self.loaded.lock().is_ok_and(|l| l.is_some());
+        let at = if live {
+            mpv.get("time-pos").await.ok().and_then(|v| v.as_f64())
+        } else {
+            None
+        };
+        if let (Some(at), Ok(mut q)) = (at, self.queue.lock()) {
+            q.position = at;
+        }
+        self.save();
+        let _ = mpv.command(json!(["quit"])).await;
+        plog!("ytmusic: mpv stopped with pikap");
+    }
+
     /// Picks up the saved queue. When mpv still plays, it plays that queue's track.
     async fn restore(self: &Arc<Self>) {
         let Some(saved) = std::fs::read(session_path())
@@ -1177,6 +1267,8 @@ impl State {
             return;
         };
         self.remember(&saved.songs);
+        *self.resume_at.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((current.info.uri.clone(), saved.position));
         if let Ok(mut q) = self.queue.lock() {
             *q = saved;
         }
@@ -1403,11 +1495,57 @@ mod live {
             ))
             .unwrap();
             drain("list", 4, false);
-            let (mpv, _) = Mpv::connect(&mpv::socket_path())
-                .await
-                .map(|(m, _, r)| (m, r))
-                .unwrap();
-            let _ = mpv.command(json!(["quit"])).await;
+            cmd.send(Command::SetPlaying(true)).unwrap();
+            drain("playing again", 3, true);
+
+            // Closing pikap stops mpv and remembers where the track stood.
+            let (done, wait) = std::sync::mpsc::channel();
+            cmd.send(Command::Quit(done)).unwrap();
+            assert!(
+                wait.recv_timeout(Duration::from_secs(5)).is_ok(),
+                "quit answered"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(
+                tokio::net::UnixStream::connect(mpv::socket_path())
+                    .await
+                    .is_err(),
+                "mpv is gone"
+            );
+            let saved: Queue =
+                serde_json::from_slice(&std::fs::read(session_path()).unwrap()).unwrap();
+            println!(
+                "saved at {:.1}s of {}",
+                saved.position, saved.songs[saved.index].info.name
+            );
+            drop(cmd);
+
+            // A new pikap: play picks up at that second.
+            let (cmd, rx) = unbounded_channel();
+            let (tx, updates) = std::sync::mpsc::channel();
+            tokio::spawn(run(rx, tx));
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            cmd.send(Command::SetPlaying(true)).unwrap();
+            let end = Instant::now() + Duration::from_secs(20);
+            let mut resumed = None;
+            while Instant::now() < end && resumed.is_none() {
+                while let Ok(u) = updates.try_recv() {
+                    if let Update::Playback(Some(p)) = u
+                        && p.playing
+                    {
+                        resumed = Some(p.position.as_secs_f64());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            println!("resumed at {resumed:?}");
+            assert!(
+                resumed.is_some_and(|r| r >= saved.position - 1.0),
+                "picks up where it stopped"
+            );
+            let (done, wait) = std::sync::mpsc::channel();
+            cmd.send(Command::Quit(done)).unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(5));
         });
     }
 }
