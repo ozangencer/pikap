@@ -78,7 +78,10 @@ impl Client {
             Session::In(yt) => yt.raw_json_query(query).await,
             Session::Out(yt) => yt.raw_json_query(query).await,
         }
-        .map_err(|e| anyhow::anyhow!("YouTube Music {path}: {e}"))?;
+        .map_err(|e| {
+            anyhow::Error::new(crate::backend::Problem::Unreachable)
+                .context(format!("YouTube Music {path}: {e}"))
+        })?;
         Ok(serde_json::from_str(&text)?)
     }
 

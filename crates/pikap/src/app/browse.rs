@@ -649,14 +649,7 @@ impl App {
     /// The track the add and remove keys act on: the selected row of whatever list has
     /// the keys, otherwise the playing track.
     fn selected_track(&self) -> Option<Track> {
-        let row = if self.active_artist().is_some() {
-            self.artist_track().map(|t| Track::from(&t))
-        } else if let Some(open) = self.active_open() {
-            self.opened_rows(open).get(open.selected).map(Track::from)
-        } else {
-            self.page_track()
-        };
-        row.filter(|t| crate::backend::is_track(&t.uri))
+        self.highlighted_track()
             .or_else(|| {
                 self.model.now.as_ref().map(|n| Track {
                     uri: n.id.clone(),
@@ -666,6 +659,18 @@ impl App {
                 })
             })
             .filter(|t| crate::backend::is_track(&t.uri))
+    }
+
+    /// The track row the cursor is on, if it is on one.
+    pub(super) fn highlighted_track(&self) -> Option<Track> {
+        let row = if self.active_artist().is_some() {
+            self.artist_track().map(|t| Track::from(&t))
+        } else if let Some(open) = self.active_open() {
+            self.opened_rows(open).get(open.selected).map(Track::from)
+        } else {
+            self.page_track()
+        };
+        row.filter(|t| crate::backend::is_track(&t.uri))
     }
 
     /// The selected track row of a page with nothing opened on it.

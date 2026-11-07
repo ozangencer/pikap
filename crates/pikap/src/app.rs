@@ -26,6 +26,8 @@ const SEEK_STEP: Duration = Duration::from_secs(5);
 const VOLUME_STEP: u8 = 5;
 const QUEUE_SHOWN: usize = 50;
 const DEBOUNCE: Duration = Duration::from_millis(300);
+/// How long the cursor rests on a track before it is got ready to play.
+const PREPARE_AFTER: Duration = Duration::from_millis(500);
 const HOLD: Duration = Duration::from_millis(1500);
 
 pub enum Flow {
@@ -90,6 +92,9 @@ pub struct App {
     /// A list or artist opened in place of the home tab body; `⌫` closes it.
     pub home_open: Option<Opened>,
     home_trail: Vec<Opened>,
+    /// The track row under the cursor and since when; `prepared` is the last one sent.
+    hover: Option<(String, Instant)>,
+    prepared: Option<String>,
     /// Polled positions and volumes are stale for a moment after we change them.
     hold_position: Option<Instant>,
     hold_volume: Option<Instant>,
@@ -148,6 +153,8 @@ impl App {
             artist_view: ArtistView::default(),
             home_open: None,
             home_trail: Vec::new(),
+            hover: None,
+            prepared: None,
             hold_position: None,
             hold_volume: None,
             live,
@@ -201,6 +208,33 @@ impl App {
             self.position = (self.position + (now - self.last_tick)).min(track.duration);
         }
         self.last_tick = now;
+        self.prepare_hovered(now);
+    }
+
+    /// YouTube Music needs seconds to find a track's stream. The track the cursor rests
+    /// on is found ahead, so pressing ↵ on it plays at once; a cursor passing through a
+    /// list asks for nothing.
+    fn prepare_hovered(&mut self, now: Instant) {
+        if self.service != Service::YtMusic || self.live.is_none() {
+            return;
+        }
+        let row = self
+            .highlighted_track()
+            .map(|t| t.uri)
+            .filter(|u| self.model.now.as_ref().is_none_or(|n| &n.id != u));
+        match (&self.hover, row) {
+            (_, None) => self.hover = None,
+            (Some((hovered, _)), Some(uri)) if *hovered == uri => {}
+            (_, Some(uri)) => self.hover = Some((uri, now)),
+        }
+        if let Some((uri, since)) = &self.hover
+            && now - *since >= PREPARE_AFTER
+            && self.prepared.as_ref() != Some(uri)
+        {
+            let uri = uri.clone();
+            self.prepared = Some(uri.clone());
+            self.command(Command::Prepare(uri));
+        }
     }
 
     /// Applies everything the worker sent since the last frame.
@@ -252,6 +286,7 @@ impl App {
                 }
             }
             Update::Error(message) => self.notice = Some(message),
+            Update::Problem(problem) => self.notice = Some((self.s.problem)(&problem)),
             Update::Meta(ready) => self.model.meta = Some(ready),
             Update::LastPlayed(last) => {
                 self.model.last_played = last.as_ref().map(|h| (h.title.clone(), h.artist.clone()));
@@ -1259,6 +1294,75 @@ mod tests {
         assert_eq!(waits.len(), 2);
         assert_eq!(sent(&mut spotify_rx), ["quit"]);
         assert_eq!(sent(&mut ytm_commands), ["quit"]);
+    }
+
+    fn prepared(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Command>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(c) = rx.try_recv() {
+            if let Command::Prepare(uri) = c {
+                out.push(uri);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_track_under_a_resting_cursor_gets_ready() {
+        let (ytm, mut rx, _tx) = fake(Service::YtMusic);
+        let mut app = App::new(Lang::En, Mode::Dark, Model::default(), Some(ytm));
+        app.apply(playing("ytm:track:now"));
+        app.apply(Update::Queue(
+            ["ytm:track:a", "ytm:track:b"]
+                .iter()
+                .map(|u| item(u).track())
+                .collect(),
+        ));
+        let t0 = Instant::now();
+
+        app.selected = 0;
+        app.prepare_hovered(t0 + Duration::from_secs(1));
+        assert!(
+            prepared(&mut rx).is_empty(),
+            "the playing track needs nothing"
+        );
+
+        app.selected = 1;
+        app.prepare_hovered(t0);
+        app.prepare_hovered(t0 + Duration::from_millis(300));
+        assert!(prepared(&mut rx).is_empty(), "not after a glance");
+        app.selected = 2;
+        app.prepare_hovered(t0 + Duration::from_millis(400));
+        app.prepare_hovered(t0 + Duration::from_millis(700));
+        assert!(
+            prepared(&mut rx).is_empty(),
+            "moving on starts the wait again"
+        );
+        app.prepare_hovered(t0 + Duration::from_millis(950));
+        assert_eq!(prepared(&mut rx), ["ytm:track:b"]);
+        app.prepare_hovered(t0 + Duration::from_secs(3));
+        assert!(prepared(&mut rx).is_empty(), "asked once");
+
+        let (spotify, mut spotify_rx, _tx) = fake(Service::Spotify);
+        let mut app = App::new(Lang::En, Mode::Dark, Model::default(), Some(spotify));
+        app.apply(playing("spotify:track:now"));
+        app.apply(Update::Queue(vec![item("spotify:track:a").track()]));
+        app.selected = 1;
+        app.prepare_hovered(t0);
+        app.prepare_hovered(t0 + Duration::from_secs(1));
+        assert!(
+            prepared(&mut spotify_rx).is_empty(),
+            "Spotify starts tracks at once"
+        );
+    }
+
+    #[test]
+    fn problems_read_in_the_ui_language() {
+        let mut app = App::new(Lang::Tr, Mode::Dark, Model::default(), None);
+        app.apply(Update::Problem(crate::backend::Problem::SignInToLike));
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Beğenmek için YouTube Music'e giriş yap: pikap auth ytmusic")
+        );
     }
 
     #[test]

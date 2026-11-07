@@ -3,7 +3,7 @@
 //! translated. Lines that name the service are one per service: Turkish suffixes follow
 //! the name (Spotify'da, YouTube Music'te), so a template would not do.
 
-use crate::backend::Service;
+use crate::backend::{Problem, Service};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
@@ -174,6 +174,8 @@ pub struct Strings {
     pub setup_invalid: &'static str,
     pub setup_cancel: &'static str,
     pub setup_saved: fn(&str) -> String,
+    /// A known problem the backend reported.
+    pub problem: fn(&Problem) -> String,
     /// `pikap auth` without a service: which one.
     pub auth_which: &'static str,
     pub ytm_intro: &'static str,
@@ -401,6 +403,22 @@ pub static TR: Strings = Strings {
     setup_invalid: "Bu bir Client ID'ye benzemiyor (32 harf ve rakam). Tekrar dene ya da çıkmak için ↵.",
     setup_cancel: "Durduruldu. Client ID'yi aldığında `pikap auth`'u yeniden çalıştır.",
     setup_saved: |path| format!("Kaydedildi: {path}"),
+    problem: |p| match p {
+        Problem::SignInToLike => {
+            "Beğenmek için YouTube Music'e giriş yap: pikap auth ytmusic".into()
+        }
+        Problem::SignInToEdit => {
+            "Playlist düzenlemek için YouTube Music'e giriş yap: pikap auth ytmusic".into()
+        }
+        Problem::Missing(tool) => format!("{tool} kurulu değil: brew install {tool}"),
+        Problem::CannotRemove => "YouTube Music'te playlist'ten çıkarma henüz yok".into(),
+        Problem::NotLoaded => "Bu şarkı henüz yüklenmedi, birazdan tekrar dene".into(),
+        Problem::NoRadio => "Bunun için radyo bulunamadı".into(),
+        Problem::Unplayable(why) => {
+            format!("Şarkı açılamadı ({why}). yt-dlp güncel mi? brew upgrade yt-dlp")
+        }
+        Problem::Unreachable => "YouTube Music'e ulaşılamadı".into(),
+    },
     auth_which: "Hangi servis?\n  1) Spotify\n  2) YouTube Music\nSeçim [1]: ",
     ytm_intro: "YouTube Music girişsiz de çalışır: arama, sanatçılar, albümler, radyo ve senkron sözler hazır.\n\
         Giriş yapınca beğenilenlerin, playlist'lerin, Home ve beğenme de gelir.\n\
@@ -644,6 +662,24 @@ pub static EN: Strings = Strings {
     setup_invalid: "That does not look like a Client ID (32 letters and digits). Try again, or press ↵ to stop.",
     setup_cancel: "Stopped. Run `pikap auth` again once you have the Client ID.",
     setup_saved: |path| format!("Saved to {path}"),
+    problem: |p| match p {
+        Problem::SignInToLike => {
+            "Sign in to YouTube Music to like songs: pikap auth ytmusic".into()
+        }
+        Problem::SignInToEdit => {
+            "Sign in to YouTube Music to edit playlists: pikap auth ytmusic".into()
+        }
+        Problem::Missing(tool) => format!("{tool} is not installed: brew install {tool}"),
+        Problem::CannotRemove => {
+            "Removing from a playlist is not there yet on YouTube Music".into()
+        }
+        Problem::NotLoaded => "That track is not loaded yet; try again in a moment".into(),
+        Problem::NoRadio => "No radio found for this".into(),
+        Problem::Unplayable(why) => {
+            format!("The track would not open ({why}). Is yt-dlp current? brew upgrade yt-dlp")
+        }
+        Problem::Unreachable => "YouTube Music did not answer".into(),
+    },
     auth_which: "Which service?\n  1) Spotify\n  2) YouTube Music\nChoice [1]: ",
     ytm_intro: "YouTube Music works without signing in: search, artists, albums, radio and synced lyrics.\n\
         Signing in adds your liked songs, playlists, Home and liking.\n\
@@ -773,5 +809,30 @@ mod tests {
                 assert!(!line(Service::YtMusic).contains("Spotify"), "{lang:?}");
             }
         }
+    }
+
+    #[test]
+    fn every_problem_reads_in_both_languages() {
+        let problems = [
+            Problem::SignInToLike,
+            Problem::SignInToEdit,
+            Problem::Missing("mpv"),
+            Problem::CannotRemove,
+            Problem::NotLoaded,
+            Problem::NoRadio,
+            Problem::Unplayable("HTTP Error 403".into()),
+            Problem::Unreachable,
+        ];
+        for p in &problems {
+            let (tr, en) = (
+                (Lang::Tr.strings().problem)(p),
+                (Lang::En.strings().problem)(p),
+            );
+            assert!(!tr.is_empty() && tr != en, "{p:?}");
+        }
+        assert!(
+            (Lang::Tr.strings().problem)(&Problem::Missing("yt-dlp"))
+                .contains("brew install yt-dlp")
+        );
     }
 }

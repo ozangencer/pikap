@@ -40,7 +40,11 @@ pub struct Mpv {
 }
 
 /// macOS caps socket paths at 104 bytes, so the socket lives in /tmp, one per user.
+/// `PIKAP_MPV_SOCKET` names another one, so a test never touches a running pikap's mpv.
 pub fn socket_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("PIKAP_MPV_SOCKET") {
+        return PathBuf::from(path);
+    }
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/pikap-mpv-{uid}.sock"))
@@ -71,7 +75,7 @@ impl Mpv {
             .stderr(std::process::Stdio::null());
         command
             .spawn()
-            .context("mpv is not installed (brew install mpv)")?;
+            .map_err(|e| super::worker::missing(e, "mpv"))?;
         let start = Instant::now();
         loop {
             if let Ok(stream) = UnixStream::connect(socket).await {

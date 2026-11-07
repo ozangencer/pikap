@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::net::UnixStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::client::{self, Client};
@@ -22,7 +23,7 @@ use super::mpv::{self, Event, Mpv};
 use super::parse::{self, Song};
 use super::{LIKED, id, playlist_uri};
 use crate::backend::{
-    AlbumPage, ArtistPage, Command, Device, ListPage, PlayContext, Playback, Update,
+    AlbumPage, ArtistPage, Command, Device, ListPage, PlayContext, Playback, Problem, Update,
 };
 use crate::data::{Kind, LibraryIndex, NowPlaying, SearchResults, Track};
 use crate::log::plog;
@@ -34,6 +35,13 @@ const TICK: Duration = Duration::from_secs(1);
 const URL_LIFE: Duration = Duration::from_secs(4 * 3600);
 /// Tracks resolved ahead of the playing one.
 const PREFETCH: usize = 2;
+/// After a load, how often and how long mpv is asked whether the sound started.
+const START_POLL_EVERY: Duration = Duration::from_millis(100);
+const START_POLLS: usize = 40;
+/// Each step of closing mpv waits at most this long.
+const QUIT_STEP: Duration = Duration::from_millis(300);
+/// Tracks resolved at once for the cursor.
+const PREPARING: usize = 2;
 const COVER_PX: u32 = 640;
 const MAX_LIST: usize = 1000;
 const QUEUE_SENT: usize = 50;
@@ -100,6 +108,8 @@ struct State {
     queue: Mutex<Queue>,
     /// The screen shows the other service: no playback reports.
     resting: std::sync::atomic::AtomicBool,
+    /// mpv's process id, once connected.
+    mpv_pid: Mutex<Option<i32>>,
     /// pikap is closing: nothing may start mpv again.
     quitting: std::sync::atomic::AtomicBool,
     /// A saved track and where to start it, used by the first play after startup.
@@ -112,6 +122,10 @@ struct State {
     /// One resolution per track at a time: a second, simultaneous one makes YouTube
     /// refuse the address the first one returned.
     resolving: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// The track the cursor rests on, the one worth resolving ahead.
+    hovered: Mutex<Option<String>>,
+    /// Resolutions for the cursor run two at a time.
+    preparing: tokio::sync::Semaphore,
     /// The track already given a fresh address after mpv could not open it.
     retried: Mutex<Option<String>>,
     /// Every track seen, by URI, for commands that only name one.
@@ -145,6 +159,7 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         mpv: tokio::sync::Mutex::new(None),
         events,
         queue: Mutex::new(Queue::default()),
+        mpv_pid: Mutex::new(None),
         quitting: std::sync::atomic::AtomicBool::new(false),
         resting: std::sync::atomic::AtomicBool::new(false),
         resume_at: Mutex::new(None),
@@ -153,6 +168,8 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         urls: Mutex::default(),
         resolving: Mutex::default(),
         retried: Mutex::new(None),
+        hovered: Mutex::new(None),
+        preparing: tokio::sync::Semaphore::new(PREPARING),
         songs: Mutex::default(),
         lists: Mutex::default(),
         artists: Mutex::default(),
@@ -201,7 +218,11 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
 impl State {
     fn report(&self, err: &anyhow::Error) {
         plog!("ytmusic: {err:#}");
-        let _ = self.ui.send(Update::Error(format!("{err:#}")));
+        let update = match err.downcast_ref::<Problem>() {
+            Some(problem) => Update::Problem(problem.clone()),
+            None => Update::Error(format!("{err:#}")),
+        };
+        let _ = self.ui.send(update);
     }
 
     async fn client(&self) -> Result<Arc<Client>> {
@@ -237,6 +258,12 @@ impl State {
                 }
             }
         });
+        // Its process id, to make sure it ends with pikap even if it stops answering.
+        if let Ok(pid) = fresh.get("pid").await
+            && let Some(pid) = pid.as_i64()
+        {
+            *self.mpv_pid.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid as i32);
+        }
         *mpv = Some(fresh.clone());
         Ok((fresh, running))
     }
@@ -297,6 +324,10 @@ impl State {
                 Ok(())
             }
             Command::Transfer { .. } => Ok(()),
+            Command::Prepare(uri) => {
+                self.prepare(uri);
+                Ok(())
+            }
             Command::Quit(done) => {
                 self.quit().await;
                 let _ = done.send(());
@@ -377,7 +408,7 @@ impl State {
                 self.add_to_playlist(&playlist, &track).await
             }
             Command::RemoveFromPlaylist { .. } => {
-                bail!("removing from a playlist is not there yet on YouTube Music")
+                bail!(Problem::CannotRemove)
             }
             _ => Ok(()),
         }
@@ -593,8 +624,39 @@ impl State {
                 return state.report(&err);
             }
             *state.in_mpv.lock().unwrap_or_else(|e| e.into_inner()) = Some(uri.clone());
+            // Report the start as soon as mpv has a position, not at the next tick.
+            for _ in 0..START_POLLS {
+                if state.get_f64("time-pos").await.is_some() {
+                    break;
+                }
+                tokio::time::sleep(START_POLL_EVERY).await;
+            }
             state.send_playback().await;
             state.prefetch();
+        });
+    }
+
+    /// Resolves the track the cursor rests on. Waiting requests the cursor has left
+    /// behind are dropped, so scrolling through a list costs nothing.
+    fn prepare(self: &Arc<Self>, uri: String) {
+        if let Ok(mut hovered) = self.hovered.lock() {
+            *hovered = Some(uri.clone());
+        }
+        let state = self.clone();
+        tokio::spawn(async move {
+            let Ok(_turn) = state.preparing.acquire().await else {
+                return;
+            };
+            let current = state
+                .hovered
+                .lock()
+                .is_ok_and(|h| h.as_deref() == Some(uri.as_str()));
+            if !current {
+                return;
+            }
+            if let Err(err) = state.stream_url(&uri).await {
+                plog!("ytmusic prepare {uri}: {err:#}");
+            }
         });
     }
 
@@ -689,7 +751,7 @@ impl State {
 
     fn add_to_queue(&self, uri: &str) {
         let Some(song) = self.known(uri) else {
-            return self.report(&anyhow!("that track is not loaded yet"));
+            return self.report(&Problem::NotLoaded.into());
         };
         if let Ok(mut q) = self.queue.lock() {
             let at = (q.index + 1 + q.added).min(q.songs.len());
@@ -927,7 +989,7 @@ impl State {
             (body, list, None)
         } else if id(seed, "artist").is_some() {
             let (artist, radio) = self.artist(seed).await?;
-            let list = radio.context("this artist has no radio")?;
+            let list = radio.ok_or(Problem::NoRadio)?;
             let body = json!({ "playlistId": list, "isAudioOnly": true });
             (body, list, Some(artist.name.clone()))
         } else {
@@ -940,7 +1002,7 @@ impl State {
         let answer = self.client().await?.call("next", body).await?;
         let songs = parse::songs(&answer);
         if songs.is_empty() {
-            bail!("YouTube Music sent an empty radio");
+            bail!(Problem::NoRadio);
         }
         self.remember(&songs);
         let name = name.unwrap_or_else(|| songs[0].info.name.clone());
@@ -1114,14 +1176,14 @@ impl State {
             .arg(format!("https://music.youtube.com/watch?v={video}"))
             .output()
             .await
-            .context("yt-dlp is not installed (brew install yt-dlp)")?;
+            .map_err(|e| missing(e, "yt-dlp"))?;
         let text = String::from_utf8_lossy(&out.stdout);
         let Some(url) = text.lines().find(|l| l.starts_with("http")) else {
             let err = String::from_utf8_lossy(&out.stderr);
-            bail!(
-                "yt-dlp: {}",
-                err.lines().last().unwrap_or("no stream address")
-            );
+            let last = err.lines().last().unwrap_or("no stream address");
+            bail!(Problem::Unplayable(
+                last.trim_start_matches("ERROR: ").to_owned()
+            ));
         };
         plog!(
             "ytmusic: resolved {video} in {:.1} s",
@@ -1210,7 +1272,7 @@ impl State {
 
     async fn set_liked(&self, uri: &str, liked: bool) -> Result<()> {
         if !self.signed_in() {
-            bail!("sign in to YouTube Music to like songs (pikap auth)");
+            bail!(Problem::SignInToLike);
         }
         let video = id(uri, "track").context("not a track")?;
         let path = if liked {
@@ -1239,7 +1301,7 @@ impl State {
 
     async fn add_to_playlist(&self, playlist: &str, track: &str) -> Result<()> {
         if !self.signed_in() {
-            bail!("sign in to YouTube Music to edit playlists (pikap auth)");
+            bail!(Problem::SignInToEdit);
         }
         let list = id(playlist, "playlist").context("not a playlist")?;
         let video = id(track, "track").context("not a track")?;
@@ -1288,9 +1350,15 @@ impl State {
         let Some(mpv) = self.mpv.lock().await.clone() else {
             return;
         };
+        // pikap waits about a second for this: every step is short, and mpv is ended
+        // by force if it does not go by itself.
         let live = self.loaded.lock().is_ok_and(|l| l.is_some());
         let at = if live {
-            mpv.get("time-pos").await.ok().and_then(|v| v.as_f64())
+            tokio::time::timeout(QUIT_STEP, mpv.get("time-pos"))
+                .await
+                .ok()
+                .and_then(|v| v.ok())
+                .and_then(|v| v.as_f64())
         } else {
             None
         };
@@ -1298,8 +1366,19 @@ impl State {
             q.position = at;
         }
         self.save();
-        let _ = mpv.command(json!(["quit"])).await;
-        plog!("ytmusic: mpv stopped with pikap");
+        let _ = tokio::time::timeout(QUIT_STEP, mpv.command(json!(["quit"]))).await;
+        for _ in 0..5 {
+            if UnixStream::connect(mpv::socket_path()).await.is_err() {
+                plog!("ytmusic: mpv stopped with pikap");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if let Some(pid) = self.mpv_pid.lock().ok().and_then(|p| *p) {
+            // SAFETY: kill only sends a signal; the pid is mpv's, read from mpv itself.
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            plog!("ytmusic: mpv did not quit, ended it");
+        }
     }
 
     /// Picks up the saved queue. When mpv still plays, it plays that queue's track.
@@ -1342,6 +1421,15 @@ impl State {
         self.prefetch();
         self.send_queue();
         self.follow(&current);
+    }
+}
+
+/// A program that would not start: missing, if it is not installed.
+pub fn missing(err: std::io::Error, tool: &'static str) -> anyhow::Error {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        Problem::Missing(tool).into()
+    } else {
+        anyhow::Error::new(err).context(format!("starting {tool}"))
     }
 }
 
@@ -1434,8 +1522,34 @@ fn write_cookie_file(header: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod problems {
+    use super::*;
+
+    #[test]
+    fn a_known_problem_survives_added_context() {
+        let err = anyhow::Error::new(Problem::Unreachable).context("YouTube Music browse: timeout");
+        assert_eq!(err.downcast_ref::<Problem>(), Some(&Problem::Unreachable));
+        let missing = missing(std::io::ErrorKind::NotFound.into(), "mpv");
+        assert_eq!(
+            missing.downcast_ref::<Problem>(),
+            Some(&Problem::Missing("mpv"))
+        );
+        let other = missing_other();
+        assert!(
+            other.downcast_ref::<Problem>().is_none(),
+            "only a missing program is Missing"
+        );
+    }
+
+    fn missing_other() -> anyhow::Error {
+        missing(std::io::ErrorKind::PermissionDenied.into(), "mpv")
+    }
+}
+
 /// Plays real music through mpv and talks to YouTube Music; run it by hand:
-/// `cargo test live::plays -- --ignored --nocapture`. It quits mpv at the end.
+/// `cargo test live::plays -- --ignored --nocapture`. It uses its own mpv socket
+/// (`PIKAP_MPV_SOCKET`), so a pikap running meanwhile keeps its player.
 #[cfg(test)]
 mod live {
     use super::*;
@@ -1491,6 +1605,8 @@ mod live {
     #[test]
     #[ignore]
     fn plays() {
+        // SAFETY: set before any thread of this test reads the environment.
+        unsafe { std::env::set_var("PIKAP_MPV_SOCKET", "/tmp/pikap-mpv-test.sock") };
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let (cmd, rx) = unbounded_channel();
@@ -1574,6 +1690,31 @@ mod live {
             cmd.send(Command::SetPlaying(true)).unwrap();
             drain("playing again", 3, true);
 
+            // A track the cursor rested on (in the album opened above) plays at once.
+            let hovered = "ytm:track:p0OVD0_YJnU";
+            cmd.send(Command::Prepare(hovered.into())).unwrap();
+            tokio::time::sleep(Duration::from_secs(12)).await;
+            while updates.try_recv().is_ok() {}
+            let asked = Instant::now();
+            cmd.send(Command::PlayTrack(hovered.into())).unwrap();
+            let mut started = None;
+            while asked.elapsed() < Duration::from_secs(15) && started.is_none() {
+                while let Ok(u) = updates.try_recv() {
+                    if let Update::Playback(Some(p)) = u
+                        && p.playing
+                        && p.now.as_ref().is_some_and(|n| n.id == hovered)
+                    {
+                        started = Some(asked.elapsed());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            println!("prepared track started after {started:?}");
+            assert!(
+                started.is_some_and(|d| d < Duration::from_secs(3)),
+                "prepared plays at once"
+            );
+
             // Closing pikap stops mpv and remembers where the track stood.
             let (done, wait) = std::sync::mpsc::channel();
             cmd.send(Command::Quit(done)).unwrap();
@@ -1581,13 +1722,20 @@ mod live {
                 wait.recv_timeout(Duration::from_secs(5)).is_ok(),
                 "quit answered"
             );
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            assert!(
-                tokio::net::UnixStream::connect(mpv::socket_path())
+            let quit_at = Instant::now();
+            let mut gone = None;
+            while quit_at.elapsed() < Duration::from_secs(5) {
+                if tokio::net::UnixStream::connect(mpv::socket_path())
                     .await
-                    .is_err(),
-                "mpv is gone"
-            );
+                    .is_err()
+                {
+                    gone = Some(quit_at.elapsed());
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            println!("mpv gone after {gone:?}");
+            assert!(gone.is_some(), "mpv is gone");
             let saved: Queue =
                 serde_json::from_slice(&std::fs::read(session_path()).unwrap()).unwrap();
             println!(

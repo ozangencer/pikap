@@ -114,6 +114,8 @@ impl App {
         self.pending_volume = None;
         self.hold_position = None;
         self.hold_volume = None;
+        self.hover = None;
+        self.prepared = None;
         self.list_offset.set(None);
         self.notice = Some(format!("● {}", self.service.name()));
         if let Some(remember) = self.remember_service.as_ref() {

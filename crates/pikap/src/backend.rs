@@ -136,6 +136,40 @@ pub enum Quota {
     Holding(usize),
 }
 
+/// Something the user should know went wrong, said in the UI's language. The English
+/// here is for the log.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Problem {
+    SignInToLike,
+    SignInToEdit,
+    /// A program YouTube Music plays through is missing: `mpv` or `yt-dlp`.
+    Missing(&'static str),
+    CannotRemove,
+    NotLoaded,
+    NoRadio,
+    /// A track's stream would not open; yt-dlp's last word on it.
+    Unplayable(String),
+    /// YouTube Music did not answer (the network, or a change on Google's side).
+    Unreachable,
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignInToLike => write!(f, "sign in to like songs"),
+            Self::SignInToEdit => write!(f, "sign in to edit playlists"),
+            Self::Missing(tool) => write!(f, "{tool} is not installed"),
+            Self::CannotRemove => write!(f, "removing from a playlist is not there yet"),
+            Self::NotLoaded => write!(f, "that track is not loaded yet"),
+            Self::NoRadio => write!(f, "no radio for this"),
+            Self::Unplayable(why) => write!(f, "the track would not open: {why}"),
+            Self::Unreachable => write!(f, "YouTube Music did not answer"),
+        }
+    }
+}
+
+impl std::error::Error for Problem {}
+
 /// Where music can play: a speaker, a phone, this Mac.
 #[derive(Clone, Default)]
 pub struct Device {
@@ -240,6 +274,9 @@ pub enum Command {
     Resume {
         fallback: Option<(Option<String>, String)>,
     },
+    /// The cursor rests on this track: a backend that needs time to start a track gets
+    /// it ready, so playing it is quick.
+    Prepare(String),
     /// The screen shows this service (`true`) or the other one: a resting backend stops
     /// polling and reporting.
     Active(bool),
@@ -262,6 +299,8 @@ pub enum Update {
     Cover(String, PathBuf),
     Quota(Quota),
     Error(String),
+    /// A known problem, for the UI to say in its language.
+    Problem(Problem),
     /// Whether the metadata source (artists, albums, lyrics) is available at all.
     Meta(bool),
     Artist(Arc<ArtistPage>),

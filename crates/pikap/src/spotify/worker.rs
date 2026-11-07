@@ -872,7 +872,7 @@ fn handle(
                 edit_playlist(&api, &library, &ui, playlist, track, false).await
             }
             Command::LoadQueue => send_queue(&api, &ui).await,
-            Command::Active(_) => Ok(()),
+            Command::Active(_) | Command::Prepare(_) => Ok(()),
             // Spotify.app plays on when pikap closes, as it should.
             Command::Quit(done) => {
                 let _ = done.send(());
