@@ -23,12 +23,7 @@ const BASE_DELAY: Duration = Duration::from_secs(2);
 const MAX_INLINE_WAIT: Duration = Duration::from_secs(120);
 const REFUSED_READ_HOLD: Duration = Duration::from_secs(600);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Quota {
-    Normal,
-    Retrying,
-    Holding(usize),
-}
+use crate::backend::Quota;
 
 /// An endpoint is on hold until the given time; the caller should not treat it as a failure.
 #[derive(Debug)]

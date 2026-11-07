@@ -600,7 +600,7 @@ fn device_rows(
     f: &mut Frame,
     app: &App,
     area: Rect,
-    devices: &[crate::spotify::model::Device],
+    devices: &[crate::backend::Device],
     selected: usize,
     offset: &Cell<Option<usize>>,
     slots: &mut Slots,
@@ -663,11 +663,10 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use crate::app::App;
+    use crate::backend::{ListPage, TrackInfo, Update};
     use crate::data::{Entry, Kind, LibraryIndex, SearchResults};
     use crate::gallery::CellPx;
     use crate::i18n::Lang;
-    use crate::spotify::meta::{ListPage, TrackInfo};
-    use crate::spotify::worker::Update;
     use crate::theme::Mode;
 
     fn track(name: &str, artist: &str) -> TrackInfo {
@@ -768,7 +767,7 @@ mod tests {
     #[test]
     fn narrow_status_line_keeps_its_colours() {
         let mut app = App::new(Lang::Tr, Mode::Dark, crate::data::demo(), None);
-        app.quota = crate::spotify::api::Quota::Holding(3);
+        app.quota = crate::backend::Quota::Holding(3);
         let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
         terminal
             .draw(|f| drop(super::super::render(f, &app, CellPx { w: 8, h: 16 }, false)))
@@ -790,7 +789,7 @@ mod tests {
     /// The narrow layout follows the tab keys instead of always showing the list.
     #[test]
     fn narrow_layout_shows_the_chosen_tab() {
-        use crate::spotify::meta::{LyricLine, LyricsPage};
+        use crate::backend::{LyricLine, LyricsPage};
         let screen = |app: &App| {
             let mut terminal = Terminal::new(TestBackend::new(70, 50)).unwrap();
             terminal

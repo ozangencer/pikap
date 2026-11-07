@@ -10,9 +10,8 @@ use std::sync::Arc;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, Page};
+use crate::backend::{ArtistPage, Command, TrackInfo};
 use crate::data::{Entry, Kind};
-use crate::spotify::meta::{ArtistPage, TrackInfo};
-use crate::spotify::worker::Command;
 
 pub const POPULAR: usize = 0;
 pub const LIKED: usize = 1;

@@ -14,9 +14,10 @@ use librespot_core::cache::Cache;
 use librespot_core::{Session, SessionConfig, SpotifyUri};
 use librespot_metadata::lyrics::SyncType;
 use librespot_metadata::{Album, Artist, Lyrics, Metadata, Playlist, Track};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::config;
+use crate::backend::{AlbumPage, ArtistPage, Card, ListPage, LyricLine, LyricsPage, TrackInfo};
 
 /// Spotify's own desktop client, which librespot authenticates as.
 pub const DESKTOP_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
@@ -42,69 +43,6 @@ const RELATED_ARTISTS: usize = 12;
 const ALBUMS_SHOWN: usize = 24;
 const SINGLES_SHOWN: usize = 12;
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct TrackInfo {
-    pub uri: String,
-    pub name: String,
-    /// (uri, name)
-    pub artists: Vec<(String, String)>,
-    pub duration: Duration,
-    /// (uri, name); missing in caches written before it existed.
-    #[serde(default)]
-    pub album: Option<(String, String)>,
-}
-
-impl TrackInfo {
-    pub fn artist_line(&self) -> String {
-        self.artists
-            .iter()
-            .map(|(_, name)| name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
-pub struct ArtistPage {
-    pub uri: String,
-    pub name: String,
-    pub top: Vec<TrackInfo>,
-    /// (uri, name)
-    pub related: Vec<(String, String)>,
-    /// Spotify's 0-100 popularity.
-    pub popularity: u8,
-    /// Album and single URIs (`true` for singles), albums first, as Spotify orders them.
-    pub releases: Vec<(String, bool)>,
-    /// The releases with names, years and covers; empty until they are looked up.
-    pub discography: Vec<Card>,
-}
-
-/// An album or single on an artist's page.
-#[derive(Clone)]
-pub struct Card {
-    pub uri: String,
-    pub name: String,
-    pub year: Option<u16>,
-    pub single: bool,
-    /// Image CDN address of a 300 px cover.
-    pub cover: Option<String>,
-}
-
-/// The tracks of whatever playback runs from: a playlist, album, artist or liked songs.
-pub struct ListPage {
-    pub uri: String,
-    /// Empty for liked songs, which the UI names itself.
-    pub name: String,
-    pub tracks: Vec<TrackInfo>,
-}
-
-pub struct AlbumPage {
-    pub uri: String,
-    pub name: String,
-    pub artist: String,
-    pub year: Option<u16>,
-    pub tracks: Vec<TrackInfo>,
-}
-
 /// What a playlist is, without its tracks.
 pub struct PlaylistSummary {
     pub name: String,
@@ -115,16 +53,6 @@ pub struct PlaylistSummary {
     /// Made For You: personal lists Spotify generates for the user (not radios, not
     /// the liked songs mirror).
     pub made_for_you: bool,
-}
-
-pub struct LyricLine {
-    pub start: Duration,
-    pub words: String,
-}
-
-pub struct LyricsPage {
-    pub synced: bool,
-    pub lines: Vec<LyricLine>,
 }
 
 fn cache() -> Result<Cache> {

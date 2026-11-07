@@ -1,5 +1,6 @@
 mod app;
 mod art;
+mod backend;
 mod data;
 mod gallery;
 mod i18n;

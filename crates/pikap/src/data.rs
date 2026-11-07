@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::spotify::meta::{AlbumPage, ArtistPage, ListPage, LyricsPage, TrackInfo};
+use crate::backend::{AlbumPage, ArtistPage, Device, ListPage, LyricsPage, TrackInfo};
 
 #[derive(Clone)]
 pub struct Track {
@@ -173,7 +173,7 @@ pub struct Model {
     /// Playlists and albums, once the Web API listed them.
     pub library: Option<LibraryIndex>,
     /// Connect devices, once asked for (`None` while loading).
-    pub devices: Option<Vec<crate::spotify::model::Device>>,
+    pub devices: Option<Vec<Device>>,
     /// Release covers on artist pages, by album URI.
     pub card_covers: std::collections::HashMap<String, PathBuf>,
 }

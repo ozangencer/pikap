@@ -1,20 +1,15 @@
 mod artist;
 mod browse;
 
-use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::backend::{Command, ListPage, Playback, Quota, ResumeStage, Update};
 use crate::data::{Model, NowPlaying, Track};
 use crate::i18n::{Lang, Strings};
-use crate::spotify::api::Quota;
-use crate::spotify::config;
-use crate::spotify::meta::ListPage;
-use crate::spotify::model::{Item, Playback};
-use crate::spotify::worker::{Command, ResumeStage, Update};
 use crate::theme::{Mode, Palette};
 
 pub use artist::{ArtistView, LIKED, POPULAR, RELATED, RELEASES};
@@ -90,7 +85,7 @@ pub struct App {
     hold_position: Option<Instant>,
     hold_volume: Option<Instant>,
     live: Option<Live>,
-    upcoming: Vec<Item>,
+    upcoming: Vec<Track>,
     /// Context the playback came from, if it is one a track offset can point into.
     context: Option<String>,
     /// Context URI of any kind, to match the loaded context list.
@@ -238,15 +233,13 @@ impl App {
             Update::Error(message) => self.notice = Some(message),
             Update::Meta(ready) => self.model.meta = Some(ready),
             Update::LastPlayed(last) => {
-                self.model.last_played = last
-                    .as_ref()
-                    .map(|h| (h.track.name.clone(), h.track.artist_line()));
+                self.model.last_played = last.as_ref().map(|h| (h.title.clone(), h.artist.clone()));
                 self.resume_fallback = last.map(|h| {
                     let context = h
                         .context
                         .filter(|c| !c.uri.is_empty() && c.kind != "artist")
                         .map(|c| c.uri);
-                    (context, h.track.uri)
+                    (context, h.uri)
                 });
             }
             Update::Resume(stage) => {
@@ -325,37 +318,33 @@ impl App {
     }
 
     fn apply_playback(&mut self, playback: Playback) {
-        self.model.device = playback.device.name;
+        self.model.device = playback.device;
         let now_instant = Instant::now();
         let held = |hold: Option<Instant>, pending: Option<Instant>| {
             pending.is_some() || hold.is_some_and(|h| now_instant < h)
         };
         if !held(self.hold_volume, self.pending_volume) {
-            self.model.volume = playback.device.volume_percent.unwrap_or(self.model.volume);
+            self.model.volume = playback.volume.unwrap_or(self.model.volume);
         }
-        self.model.shuffle = playback.shuffle_state;
-        self.model.repeat = match playback.repeat_state.as_str() {
-            "context" => 1,
-            "track" => 2,
-            _ => 0,
-        };
-        self.playing = playback.is_playing;
+        self.model.shuffle = playback.shuffle;
+        self.model.repeat = playback.repeat;
+        self.playing = playback.playing;
         if !held(self.hold_position, self.pending_seek) {
-            self.position = Duration::from_millis(playback.progress_ms.unwrap_or(0));
+            self.position = playback.position;
         }
         self.last_tick = Instant::now();
         let context = playback.context.filter(|c| !c.uri.is_empty());
         self.playing_context = context.as_ref().map(|c| c.uri.clone());
         // Artist contexts reject a track offset; everything else is worth trying.
         self.context = context.filter(|c| c.kind != "artist").map(|c| c.uri);
-        let Some(item) = playback.item else {
+        let Some(now) = playback.now else {
             self.model.now = None;
             return;
         };
-        if self.model.now.as_ref().is_some_and(|n| n.id == item.uri) {
+        if self.model.now.as_ref().is_some_and(|n| n.id == now.id) {
             return;
         }
-        let item_uri = item.uri.clone();
+        let item_uri = now.id.clone();
         let old_rows = self.tab_rows();
         let old_row = self
             .model
@@ -365,37 +354,10 @@ impl App {
         self.selected_on_playing = old_row.is_none_or(|i| i == self.selected);
         // The previous queue already lists this track first; drop it until the fresh
         // queue arrives so it does not show twice.
-        if self.upcoming.first().is_some_and(|i| i.uri == item.uri) {
+        if self.upcoming.first().is_some_and(|t| t.uri == now.id) {
             self.upcoming.remove(0);
         }
-        let album = item.album.clone().unwrap_or_default();
-        let cover = item
-            .cover(640)
-            .map(|(id, _)| config::cache_dir().join("covers").join(format!("{id}.jpg")))
-            .filter(|p: &PathBuf| p.exists());
-        self.model.now = Some(NowPlaying {
-            id: item.uri.clone(),
-            title: item.name.clone(),
-            artist: item.artist_line(),
-            album: if album.name.is_empty() {
-                item.show
-                    .as_ref()
-                    .map(|s| s.name.clone())
-                    .unwrap_or_default()
-            } else {
-                album.name
-            },
-            year: album.release_date.get(..4).and_then(|y| y.parse().ok()),
-            liked: false,
-            duration: Duration::from_millis(item.duration_ms),
-            cover,
-            artist_uri: item
-                .artists
-                .first()
-                .map(|a| a.uri.clone())
-                .filter(|u| !u.is_empty()),
-            album_uri: Some(album.uri).filter(|u| !u.is_empty()),
-        });
+        self.model.now = Some(now);
         if self.model.artist.as_ref().map(|a| &a.uri) != self.now_ref(|n| n.artist_uri.as_ref()) {
             self.model.artist = None;
             self.model.near.clear();
@@ -404,7 +366,7 @@ impl App {
             self.model.album = None;
         }
         self.model.lyrics = None;
-        self.model.lyrics_for = Some(item.uri);
+        self.model.lyrics_for = Some(item_uri.clone());
         let rows = self.tab_rows();
         let new_row = rows.iter().position(|r| r.uri == item_uri);
         if self.selected_on_playing || rows.is_empty() {
@@ -438,17 +400,12 @@ impl App {
         // track already listed so every row is a real upcoming track.
         let mut seen = std::collections::HashSet::from([now.id.clone()]);
         let mut loops = false;
-        for item in self.upcoming.iter().take(QUEUE_SHOWN) {
-            if !seen.insert(item.uri.clone()) {
+        for track in self.upcoming.iter().take(QUEUE_SHOWN) {
+            if !seen.insert(track.uri.clone()) {
                 loops = true;
                 break;
             }
-            queue.push(Track {
-                uri: item.uri.clone(),
-                title: item.name.clone(),
-                artist: item.artist_line(),
-                duration: Duration::from_millis(item.duration_ms),
-            });
+            queue.push(track.clone());
         }
         self.model.queue = queue;
         self.model.queue_loops = loops;
@@ -782,7 +739,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spotify::model::Device;
+    use crate::backend::{Device, PlayContext};
+    use crate::spotify::model::Item;
 
     fn item(uri: &str) -> Item {
         Item {
@@ -797,27 +755,30 @@ mod tests {
     fn looping_queue_is_cut_at_the_first_repeat() {
         let mut app = App::new(Lang::Tr, Mode::Dark, Model::default(), None);
         app.apply(Update::Playback(Some(Box::new(Playback {
-            device: Device::default(),
-            is_playing: true,
-            item: Some(item("now")),
+            playing: true,
+            now: Some(item("now").now_playing()),
             ..Playback::default()
         }))));
         let looped = ["a", "b", "c", "now", "a", "b", "now", "a"];
-        app.apply(Update::Queue(looped.iter().map(|u| item(u)).collect()));
+        app.apply(Update::Queue(
+            looped.iter().map(|u| item(u).track()).collect(),
+        ));
         let uris: Vec<&str> = app.model.queue.iter().map(|t| t.uri.as_str()).collect();
         assert_eq!(uris, ["now", "a", "b", "c"]);
         assert!(app.model.queue_loops);
 
-        app.apply(Update::Queue(["a", "b"].iter().map(|u| item(u)).collect()));
+        app.apply(Update::Queue(
+            ["a", "b"].iter().map(|u| item(u).track()).collect(),
+        ));
         assert_eq!(app.model.queue.len(), 3);
         assert!(!app.model.queue_loops);
     }
 
     fn playing(uri: &str) -> Update {
         Update::Playback(Some(Box::new(Playback {
-            is_playing: true,
-            item: Some(item(uri)),
-            context: Some(crate::spotify::model::PlayContext {
+            playing: true,
+            now: Some(item(uri).now_playing()),
+            context: Some(PlayContext {
                 uri: "spotify:playlist:p".into(),
                 kind: "playlist".into(),
             }),
@@ -1034,8 +995,8 @@ mod tests {
         assert_eq!((app.page, app.tab), (Page::Home, 2), "home: the artist tab");
     }
 
-    fn athena() -> std::sync::Arc<crate::spotify::meta::ArtistPage> {
-        use crate::spotify::meta::{ArtistPage, Card, TrackInfo};
+    fn athena() -> std::sync::Arc<crate::backend::ArtistPage> {
+        use crate::backend::{ArtistPage, Card, TrackInfo};
         std::sync::Arc::new(ArtistPage {
             uri: "spotify:artist:athena".into(),
             name: "Athena".into(),
@@ -1163,11 +1124,10 @@ mod tests {
 
     #[test]
     fn queue_and_device_popups() {
-        use crate::spotify::model::Device;
         let mut app = App::new(Lang::Tr, Mode::Dark, Model::default(), None);
         app.apply(playing("now"));
         app.apply(Update::Queue(
-            ["a", "b", "c"].iter().map(|u| item(u)).collect(),
+            ["a", "b", "c"].iter().map(|u| item(u).track()).collect(),
         ));
         app.on_key(key(KeyCode::Char('g')));
         app.on_key(key(KeyCode::Char('k')));

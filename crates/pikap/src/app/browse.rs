@@ -9,9 +9,8 @@ use std::sync::Arc;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, ArtistView};
+use crate::backend::{ArtistPage, Command, ListPage, TrackInfo};
 use crate::data::{Entry, Kind, SearchResults, Track};
-use crate::spotify::meta::{ArtistPage, ListPage, TrackInfo};
-use crate::spotify::worker::Command;
 
 /// URI of the "recently played" library row; the Web API has no URI for it.
 pub const RECENT_URI: &str = "pikap:recent";
@@ -746,7 +745,7 @@ impl App {
         });
     }
 
-    pub(super) fn apply_devices(&mut self, devices: Vec<crate::spotify::model::Device>) {
+    pub(super) fn apply_devices(&mut self, devices: Vec<crate::backend::Device>) {
         let active = devices.iter().position(|d| d.is_active).unwrap_or(0);
         if let Some(Popup::Devices { selected, .. }) = self.popup.as_mut() {
             *selected = active;
@@ -754,7 +753,7 @@ impl App {
         self.model.devices = Some(devices);
     }
 
-    fn transfer(&mut self, device: &crate::spotify::model::Device) {
+    fn transfer(&mut self, device: &crate::backend::Device) {
         let Some(id) = device.id.clone().filter(|_| !device.is_restricted) else {
             self.notice = Some(self.s.device_restricted.to_owned());
             return;

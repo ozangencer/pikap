@@ -19,9 +19,9 @@ use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, LEADER_KEYS, Page, Popup};
 use crate::art;
+use crate::backend::Quota;
 use crate::data::{NowPlaying, Track};
 use crate::gallery::{CellPx, Slots};
-use crate::spotify::api::Quota;
 
 const LEADER_HEIGHT: u16 = 5;
 const COMPACT_LEADER_HEIGHT: u16 = 9;

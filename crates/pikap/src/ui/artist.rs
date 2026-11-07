@@ -9,8 +9,8 @@ use ratatui::text::{Line, Span};
 
 use super::{fit, row, styled};
 use crate::app::{App, ArtistView, LIKED, POPULAR, RELATED, RELEASES};
+use crate::backend::ArtistPage;
 use crate::gallery::Slots;
-use crate::spotify::meta::ArtistPage;
 
 /// Width of the section labels in front of the strips.
 const LABEL_W: u16 = 18;
@@ -53,7 +53,7 @@ pub(super) fn artist_page(
     }
 
     let mut y = area.y + 2;
-    let names = |tracks: &[crate::spotify::meta::TrackInfo]| -> Vec<String> {
+    let names = |tracks: &[crate::backend::TrackInfo]| -> Vec<String> {
         tracks.iter().map(|t| t.name.clone()).collect()
     };
     let lines = |n: u16| Rect {

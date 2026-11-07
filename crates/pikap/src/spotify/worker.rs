@@ -19,13 +19,13 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::api::{self, Api, OnHold, Quota};
+use super::api::{self, Api, OnHold};
 use super::config;
-use super::meta::{AlbumPage, ArtistPage, ListPage, LyricsPage, Meta, TrackInfo};
+use super::meta::Meta;
 use super::model::{
-    Devices, Item, Page, PlayHistory, Playback, Playlist, Queue, Recent, SavedAlbum, SavedTrack,
-    SearchResponse,
+    Devices, Item, Page, Playback, Playlist, Queue, Recent, SavedAlbum, SavedTrack, SearchResponse,
 };
+use crate::backend::{AlbumPage, ArtistPage, Command, ListPage, ResumeStage, TrackInfo, Update};
 use crate::data::{Entry, Kind, LibraryIndex, SearchResults};
 use crate::log::plog;
 
@@ -54,112 +54,6 @@ const POLL_HURRY: Duration = Duration::from_secs(1);
 const HURRY_TAIL: Duration = Duration::from_secs(10);
 /// How often the macOS output volume is read while Spotify plays on this Mac.
 const SYSTEM_VOLUME_EVERY: Duration = Duration::from_millis(1500);
-
-pub enum Command {
-    SetPlaying(bool),
-    Next,
-    Previous,
-    SeekTo(u64),
-    Volume(u8),
-    SetLiked(String, bool),
-    SetShuffle(bool),
-    /// `off`, `context` or `track`.
-    SetRepeat(&'static str),
-    /// One track inside its album (Spotify.app locks up on `uris` lists).
-    PlayTrack(String),
-    /// A recently played track, inside the context it was played from.
-    PlayRecent(String),
-    PlayInContext {
-        context: String,
-        track: String,
-    },
-    /// Starts `uris[0]` inside `context` when Spotify accepts that, otherwise plays
-    /// `uris` as a list. Used for "jump to this queue entry", which the API lacks.
-    PlayFrom {
-        context: Option<String>,
-        uris: Vec<String>,
-    },
-    /// Plays a playlist, album, artist or liked songs from the start.
-    PlayContext(String),
-    LoadRadio(String),
-    StartRadio(String),
-    /// Asks for Spotify's queue again (the queue popup).
-    LoadQueue,
-    AddToQueue(String),
-    /// Skips this many tracks: jumping into the queue keeps it intact, which a fresh
-    /// play request would not.
-    SkipAhead(usize),
-    LoadDevices,
-    /// Moves playback to a Connect device, playing or not.
-    Transfer {
-        device: String,
-        play: bool,
-    },
-    /// Loads the tracks behind a library or search entry.
-    OpenList(Kind, String),
-    Search(String),
-    /// Adds a track to a playlist (any earlier copy is removed first).
-    AddToPlaylist {
-        playlist: String,
-        track: String,
-    },
-    RemoveFromPlaylist {
-        playlist: String,
-        track: String,
-    },
-    /// Wakes a device (launching Spotify.app if needed) and resumes the last session;
-    /// plays `fallback` (context, track) when Spotify has no session to resume.
-    Resume {
-        fallback: Option<(Option<String>, String)>,
-    },
-}
-
-pub enum ResumeStage {
-    Launching,
-    Resumed(String),
-    NoDevice,
-}
-
-pub enum Update {
-    Playback(Option<Box<Playback>>),
-    Queue(Vec<Item>),
-    Liked(String, bool),
-    Cover(String, PathBuf),
-    Quota(Quota),
-    Error(String),
-    /// Whether librespot metadata is available at all.
-    Meta(bool),
-    Artist(Arc<ArtistPage>),
-    Album(Arc<AlbumPage>),
-    /// A seed and Spotify's radio playlist for it.
-    Radio(String, Arc<ListPage>),
-    Lyrics(String, Option<Arc<LyricsPage>>),
-    LastPlayed(Option<Box<PlayHistory>>),
-    Resume(ResumeStage),
-    /// The tracks of the context playback runs from.
-    Context(Arc<ListPage>),
-    /// A command was refused because Spotify put its endpoint on hold.
-    OnHold,
-    /// The macOS output volume changed (only while playing on this Mac).
-    Volume(u8),
-    Devices(Vec<super::model::Device>),
-    /// A release cover on an artist page is on disk: (album uri, file).
-    CardCover(String, PathBuf),
-    /// All liked songs, for "liked by you" lists.
-    LikedLibrary(Arc<Vec<TrackInfo>>),
-    Library(Box<LibraryIndex>),
-    /// The Made For You entries with their names, once librespot read them.
-    MadeForYou(Vec<Entry>),
-    /// An opened list, or a fresh copy of one after an edit.
-    List(Arc<ListPage>),
-    Search(Arc<SearchResults>),
-    /// A playlist edit went through.
-    Edited {
-        playlist: String,
-        track: String,
-        added: bool,
-    },
-}
 
 #[derive(Default)]
 struct MadeForYou {
@@ -811,7 +705,7 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
                                 spawn_context(&api, &library, &ui, &c.kind, c.uri);
                             }
                         }
-                        if ui.send(Update::Playback(playback.map(Box::new))).is_err() {
+                        if ui.send(Update::Playback(playback.map(|p| Box::new(p.into())))).is_err() {
                             break;
                         }
                         let uri = item.as_ref().map(|i| i.uri.clone());
@@ -820,7 +714,7 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
                             match api.get::<Recent>("me/player/recently-played?limit=1").await {
                                 Ok(recent) => {
                                     let last = recent.and_then(|r| r.items.into_iter().next());
-                                    let _ = ui.send(Update::LastPlayed(last.map(Box::new)));
+                                    let _ = ui.send(Update::LastPlayed(last.map(|h| Box::new(h.into()))));
                                 }
                                 Err(err) => report(&ui, &err),
                             }
@@ -987,7 +881,10 @@ fn handle(
                 result
             }
             Command::LoadDevices => api.get::<Devices>("me/player/devices").await.map(|d| {
-                let _ = ui.send(Update::Devices(d.map(|d| d.devices).unwrap_or_default()));
+                let devices = d.map(|d| d.devices).unwrap_or_default();
+                let _ = ui.send(Update::Devices(
+                    devices.into_iter().map(Into::into).collect(),
+                ));
             }),
             Command::Transfer { device, play } => {
                 let body = json!({ "device_ids": [device], "play": play });
@@ -1335,7 +1232,8 @@ async fn play(api: &Api, body: &serde_json::Value) -> Result<()> {
 
 async fn send_queue(api: &Api, ui: &Sender<Update>) -> Result<()> {
     let queue = api.get::<Queue>("me/player/queue").await?;
-    let _ = ui.send(Update::Queue(queue.map(|q| q.queue).unwrap_or_default()));
+    let items = queue.map(|q| q.queue).unwrap_or_default();
+    let _ = ui.send(Update::Queue(items.iter().map(Item::track).collect()));
     Ok(())
 }
 
@@ -1344,7 +1242,7 @@ async fn follow_track(api: &Arc<Api>, library: &Arc<Library>, item: &Item, ui: &
     match api.get::<Queue>("me/player/queue").await {
         Ok(queue) => {
             let items = queue.map(|q| q.queue).unwrap_or_default();
-            let _ = ui.send(Update::Queue(items));
+            let _ = ui.send(Update::Queue(items.iter().map(Item::track).collect()));
         }
         Err(err) => report(ui, &err),
     }
@@ -1453,12 +1351,12 @@ fn spawn_metadata(api: &Arc<Api>, library: &Arc<Library>, item: &Item, ui: &Send
 
 /// Covers are cached by album id; image CDN requests do not count against the API quota.
 async fn cover_file(api: &Api, id: &str, url: &str) -> Result<PathBuf> {
-    let dir = config::cache_dir().join("covers");
-    let path = dir.join(format!("{id}.jpg"));
+    let path = super::model::cover_path(id);
     if path.exists() {
         return Ok(path);
     }
-    std::fs::create_dir_all(&dir)?;
+    let dir = path.parent().context("cover dir")?;
+    std::fs::create_dir_all(dir)?;
     let bytes = api
         .http()
         .get(url)
