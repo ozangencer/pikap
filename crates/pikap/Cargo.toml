@@ -4,11 +4,11 @@ version = "0.1.5"
 edition.workspace = true
 license.workspace = true
 rust-version = "1.88"
-description = "A Spotify remote for the terminal: album art, synced lyrics, a turning record"
+description = "A music remote for the terminal, for Spotify and YouTube Music: album art, synced lyrics, a turning record"
 authors = ["Ozan Gençer"]
 repository = "https://github.com/ozangencer/pikap"
 readme = "../../README.md"
-keywords = ["spotify", "tui", "terminal", "music", "ratatui"]
+keywords = ["spotify", "youtube-music", "tui", "terminal", "music"]
 categories = ["command-line-utilities", "multimedia::audio"]
 
 [dependencies]

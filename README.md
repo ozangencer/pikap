@@ -1,9 +1,9 @@
 <h1 align="center"><img src="docs/logo.png" alt="pikap: music beside your coding agents" width="800"></h1>
 
-A Spotify remote for the terminal. pikap does not play audio itself: it drives
-Spotify.app (or any Spotify Connect device) and gives the terminal the album art,
-synced lyrics, an artist page with the whole discography, and a record that turns
-while the music plays.
+A music remote for the terminal, for Spotify and YouTube Music. pikap does not play
+audio itself: it drives Spotify.app (or any Spotify Connect device), or mpv for
+YouTube Music, and gives the terminal the album art, synced lyrics, an artist page
+with the whole discography, and a record that turns while the music plays.
 
 <p align="center"><img src="docs/demo.gif" alt="pikap in Muxy: home, lyrics, artist page, library, search, stage mode, with a second pikap in a side pane" width="900"></p>
 <p align="center"><a href="docs/demo.mp4">Watch the demo in full resolution (70 s)</a></p>
@@ -24,8 +24,10 @@ while the music plays.
 - **Playlists**: add the selected track to one of your playlists (`a`), remove it
   (`x`), add it to the queue (`e`).
 - **Queue** (`g k`) and **devices** (`g d`): jump ahead in the queue, move playback
-  to your phone or speaker.
-- **Radio**: Spotify's own radio for the playing track or artist.
+  to your phone or speaker (Spotify).
+- **Radio**: the service's own radio for the playing track or artist.
+- **Spotify and YouTube Music** in one pikap: `g S` switches, pausing the one you
+  leave. Each keeps its own queue, library and open pages.
 - A `g` key panel for getting around, a narrow layout for side panes, light and dark
   themes, English and Turkish.
 
@@ -54,13 +56,14 @@ Every colour comes from the album cover that is playing.
 
 ## Requirements
 
-- **macOS**. pikap talks to Spotify.app and the system (volume, focus) through macOS
-  tools.
+- **macOS**. pikap talks to Spotify.app, mpv and the system (volume, focus) through
+  macOS tools.
 - A **terminal with kitty graphics** for the cover, the halo and the record: tested in
   Ghostty and Muxy; kitty and WezTerm speak the same protocol. Other terminals
   (Terminal.app, for example) get the same interface without the images.
   `pikap --check-terminal` tells which one you have.
-- **Spotify Premium** (Spotify only allows remote control with Premium).
+- For Spotify: **Spotify Premium** (Spotify only allows remote control with Premium).
+- For YouTube Music: **mpv** and **yt-dlp** (`brew install mpv yt-dlp`).
 
 ## Install
 
@@ -74,10 +77,10 @@ Or build it from source with Rust 1.88 or newer:
 ## Set up Spotify
 
 ```sh
-pikap auth
+pikap auth spotify
 ```
 
-The first time, `pikap auth` opens the Spotify Developer Dashboard and walks you
+(`pikap auth` alone asks which service.) The first time, it opens the Spotify Developer Dashboard and walks you
 through it. Spotify gives every user their own app (there is no shared key), so the
 requests count against your own quota and nobody else's:
 
@@ -102,6 +105,34 @@ pikap recognises them among what you play. Nothing to set up. To add one you hav
 never played, you can paste its share link into `made_for_you` in the config
 (optional, see [`config.example.toml`](config.example.toml)).
 
+## Set up YouTube Music
+
+YouTube Music needs no setup to start: search, artist pages, albums, radio and synced
+lyrics work signed out.
+
+```sh
+pikap --backend ytmusic
+```
+
+To bring in your liked songs and playlists, get a Home picked for you rather than
+for everyone, and like songs from pikap, sign in once:
+
+```sh
+pikap auth ytmusic
+```
+
+It takes the sign-in from the browser you use YouTube Music in, through yt-dlp. If
+macOS keeps the terminal out of the browser's data, it says which terminal to give
+**Full Disk Access** and opens that setting; the access is only needed while signing
+in. Or paste the cookie instead, copied from the browser's DevTools; `pikap auth
+ytmusic` shows the steps. Either way the sign-in is checked and kept in
+`~/.config/pikap/ytmusic-cookie.txt`, readable only by you.
+
+pikap opens on the service you used last; `--backend spotify|ytmusic` (or
+`PIKAP_BACKEND`) picks one, and `g S` switches while it runs. YouTube Music plays
+through mpv, which stops when pikap quits; the next start shows where you were, and
+play picks up at that second.
+
 ## Keys
 
 | Key | |
@@ -119,26 +150,33 @@ never played, you can paste its share link into `made_for_you` in the config
 | `a` `x` `e` | add to playlist / remove from it / add to queue |
 | `r` | radio |
 | `/` | search |
-| `g` | key panel: `l` library, `s` search, `y` liked, `r` recent, `k` queue, `d` devices, `a` artist, `b` album, `L` lyrics, `z` stage |
+| `g` | key panel: `l` library, `s` search, `y` liked, `r` recent, `k` queue, `d` devices, `a` artist, `b` album, `L` lyrics, `z` stage, `S` switch service |
 | `z` | stage mode (`⌫` leaves) |
 | `⌫` | back |
 | `T` | light / dark theme |
 | `ctrl-l` | redraw everything |
 | `q` | quit |
 
-`pikap --demo` shows a sample screen without Spotify; `--lang en|tr` and
+`pikap --demo` shows a sample screen without any service; `--lang en|tr` and
 `--theme dark|light` override the detected ones.
 
 ## Notes
 
-- Development Mode apps get small daily quotas per endpoint. pikap keeps its
-  requests low (a normal start makes about three), caches the library, liked songs
-  and track details under `~/.cache/pikap/`, and shows on the status line when
-  Spotify puts an endpoint on hold.
-- Lists always play as a Spotify context (album, playlist, liked songs, Spotify's
-  radio playlist). Starting playback from a plain list of tracks leaves current
-  Spotify.app versions stuck with no track, so pikap never does.
-- When Spotify plays on this Mac, the volume shown and changed is the system volume.
+- Spotify: Development Mode apps get small daily quotas per endpoint. pikap keeps
+  its requests low (a normal start makes about three), caches the library, liked
+  songs and track details under `~/.cache/pikap/`, and shows on the status line when
+  Spotify puts an endpoint on hold. While YouTube Music is on screen, it makes none.
+- Spotify: lists always play as a Spotify context (album, playlist, liked songs,
+  Spotify's radio playlist). Starting playback from a plain list of tracks leaves
+  current Spotify.app versions stuck with no track, so pikap never does.
+- Spotify: when it plays on this Mac, the volume shown and changed is the system
+  volume.
+- YouTube Music: a track that was not lined up takes a few seconds to start while
+  yt-dlp finds its stream; the next tracks are found ahead, so they start at once.
+  Keep yt-dlp current (`brew upgrade yt-dlp`): YouTube changes often.
+- YouTube Music: pikap uses YouTube Music's internal API, as other unofficial clients
+  do, so a change on Google's side can break parts of it until pikap catches up.
+  Synced lyrics come from [LRCLIB](https://lrclib.net).
 - A log of every request is kept in `~/.cache/pikap/pikap.log`.
 
 ## License
