@@ -23,8 +23,10 @@ use crate::backend::Quota;
 use crate::data::{NowPlaying, Track};
 use crate::gallery::{CellPx, Slots};
 
-const LEADER_HEIGHT: u16 = 5;
-const COMPACT_LEADER_HEIGHT: u16 = 9;
+/// The `g` panel: two border rows around four columns of keys.
+const LEADER_HEIGHT: u16 = 2 + LEADER_KEYS.len().div_ceil(4) as u16;
+/// Narrow: borders, the title row and a gap, then two columns of keys.
+const COMPACT_LEADER_HEIGHT: u16 = 4 + LEADER_KEYS.len().div_ceil(2) as u16;
 const REFLECTION_ROWS: u16 = 3;
 const COLUMN_GAP: u16 = 5;
 const WIDE_MIN: (u16, u16) = (100, 30);
@@ -297,6 +299,14 @@ fn compact(f: &mut Frame, app: &App, title_as_image: bool, slots: &mut Slots) {
     status_line(f, app, status, true, slots);
 }
 
+/// The service as the narrow header names it.
+fn short_name(service: crate::backend::Service) -> &'static str {
+    match service {
+        crate::backend::Service::Spotify => "Spotify",
+        crate::backend::Service::YtMusic => "YT Music",
+    }
+}
+
 fn header_line(f: &mut Frame, app: &App, area: Rect, compact: bool) {
     let p = app.p();
     if compact {
@@ -305,8 +315,10 @@ fn header_line(f: &mut Frame, app: &App, area: Rect, compact: bool) {
             Page::Library => app.s.library,
             Page::Search => app.s.search,
         };
+        let service = short_name(app.service);
         let logo = Line::from(vec![
             Span::styled("◉ pikap", p.key()),
+            Span::styled(format!(" · {service}"), p.muted()),
             Span::styled(format!("  {page}"), p.muted()),
         ]);
         f.render_widget(logo, area);
@@ -317,14 +329,18 @@ fn header_line(f: &mut Frame, app: &App, area: Rect, compact: bool) {
             .next()
             .unwrap_or_default()
             .trim();
-        let room = area.width.saturating_sub(11 + page.chars().count() as u16);
+        let used = 14 + service.chars().count() + page.chars().count();
+        let room = area.width.saturating_sub(used as u16);
         f.render_widget(
             styled(fit(&format!("▣ {device}"), room), p.muted()).right_aligned(),
             area,
         );
         return;
     }
-    let mut crumbs = vec![Span::styled("◉ pikap", p.key())];
+    let mut crumbs = vec![
+        Span::styled("◉ pikap", p.key()),
+        Span::styled(format!(" · {}", app.service.name()), p.muted()),
+    ];
     let mut trail: Vec<String> = Vec::new();
     match app.page {
         Page::Home => {

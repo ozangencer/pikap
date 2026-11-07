@@ -77,6 +77,8 @@ struct Library {
     liked: tokio::sync::Mutex<Option<Arc<Vec<TrackInfo>>>>,
     /// Set while a resume is in flight; the poll loop speeds up until music plays.
     hurry: std::sync::atomic::AtomicBool,
+    /// Set while the screen shows the other service: nothing polls.
+    resting: std::sync::atomic::AtomicBool,
     /// Spotify plays on this Mac: the volume shown and set is the system volume, which
     /// the volume keys change and Spotify neither reports nor follows.
     local: std::sync::atomic::AtomicBool,
@@ -657,6 +659,12 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
         tokio::select! {
             command = commands.recv() => {
                 let Some(command) = command else { break };
+                // The other service is on screen: no polling, so no quota spent.
+                if let Command::Active(on) = command {
+                    library.resting.store(!on, Ordering::Relaxed);
+                    next_poll = if on { Duration::ZERO } else { POLL_IDLE };
+                    continue;
+                }
                 handle(&api, &library, &ui, &poke, command);
                 next_poll = SETTLE;
             }
@@ -665,6 +673,10 @@ pub async fn run(api: Arc<Api>, mut commands: UnboundedReceiver<Command>, ui: Se
                 continue;
             }
             () = tokio::time::sleep(next_poll) => {
+                if library.resting.load(Ordering::Relaxed) {
+                    next_poll = POLL_IDLE;
+                    continue;
+                }
                 let mut playing = false;
                 match api.get::<Playback>("me/player?additional_types=episode").await {
                     Ok(mut playback) => {
@@ -860,6 +872,7 @@ fn handle(
                 edit_playlist(&api, &library, &ui, playlist, track, false).await
             }
             Command::LoadQueue => send_queue(&api, &ui).await,
+            Command::Active(_) => Ok(()),
             // Spotify.app plays on when pikap closes, as it should.
             Command::Quit(done) => {
                 let _ = done.send(());
@@ -1125,7 +1138,7 @@ fn watch_system_volume(library: &Arc<Library>, ui: &Sender<Update>) {
         let mut last = None;
         loop {
             tokio::time::sleep(SYSTEM_VOLUME_EVERY).await;
-            if !library.local.load(Ordering::Relaxed) {
+            if !library.local.load(Ordering::Relaxed) || library.resting.load(Ordering::Relaxed) {
                 last = None;
                 continue;
             }

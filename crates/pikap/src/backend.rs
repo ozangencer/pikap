@@ -20,6 +20,31 @@ pub enum Service {
     YtMusic,
 }
 
+impl Service {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Spotify => "Spotify",
+            Self::YtMusic => "YouTube Music",
+        }
+    }
+
+    /// The name on the command line and in the saved choice.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Spotify => "spotify",
+            Self::YtMusic => "ytmusic",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key.trim() {
+            "spotify" => Some(Self::Spotify),
+            "ytmusic" | "youtube-music" | "ytm" => Some(Self::YtMusic),
+            _ => None,
+        }
+    }
+}
+
 /// Whether a URI names a single track (not an episode, list or heading).
 pub fn is_track(uri: &str) -> bool {
     uri.starts_with("spotify:track:") || uri.starts_with("ytm:track:")
@@ -215,6 +240,9 @@ pub enum Command {
     Resume {
         fallback: Option<(Option<String>, String)>,
     },
+    /// The screen shows this service (`true`) or the other one: a resting backend stops
+    /// polling and reporting.
+    Active(bool),
     /// pikap is closing: a backend that plays the music itself stops it. The sender
     /// answers once it is done.
     Quit(std::sync::mpsc::Sender<()>),

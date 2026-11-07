@@ -1,5 +1,6 @@
 mod artist;
 mod browse;
+mod switch;
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -14,9 +15,12 @@ use crate::theme::{Mode, Palette};
 
 pub use artist::{ArtistView, LIKED, POPULAR, RELATED, RELEASES};
 pub use browse::{LibraryView, Opened, Page, Popup, SearchView};
+pub use switch::Spawn;
 
 /// Leader (`g`) keys, shown in the panel in this order; labels live in `Strings::leader_labels`.
-pub const LEADER_KEYS: [char; 12] = ['l', 's', 'y', 'r', 'k', 'L', 'c', 'a', 'b', 'm', 'd', 'z'];
+pub const LEADER_KEYS: [char; 13] = [
+    'l', 's', 'y', 'r', 'k', 'L', 'c', 'a', 'b', 'm', 'd', 'z', 'S',
+];
 
 const SEEK_STEP: Duration = Duration::from_secs(5);
 const VOLUME_STEP: u8 = 5;
@@ -90,6 +94,12 @@ pub struct App {
     hold_position: Option<Instant>,
     hold_volume: Option<Instant>,
     live: Option<Live>,
+    /// The other service, while the screen shows this one (`g S`).
+    other: Option<switch::Side>,
+    /// Starts the other service's worker the first time it is switched to.
+    pub spawn: Option<Spawn>,
+    /// Keeps the service last shown, for the next start.
+    pub remember_service: Option<Box<dyn Fn(Service)>>,
     upcoming: Vec<Track>,
     /// Context the playback came from, if it is one a track offset can point into.
     context: Option<String>,
@@ -141,6 +151,9 @@ impl App {
             hold_position: None,
             hold_volume: None,
             live,
+            other: None,
+            spawn: None,
+            remember_service: None,
             upcoming: Vec::new(),
             context: None,
             playing_context: None,
@@ -528,11 +541,14 @@ impl App {
     }
 
     /// Tells the backend pikap is closing; the answer comes when it is done.
-    pub fn shutdown(&self) -> Option<std::sync::mpsc::Receiver<()>> {
-        let live = self.live.as_ref()?;
-        let (done, wait) = std::sync::mpsc::channel();
-        live.commands.send(Command::Quit(done)).ok()?;
-        Some(wait)
+    pub fn shutdown(&self) -> Vec<std::sync::mpsc::Receiver<()>> {
+        self.lives()
+            .filter_map(|live| {
+                let (done, wait) = std::sync::mpsc::channel();
+                live.commands.send(Command::Quit(done)).ok()?;
+                Some(wait)
+            })
+            .collect()
     }
 
     fn command(&self, command: Command) {
@@ -655,6 +671,7 @@ impl App {
     fn leader_key(&mut self, c: char) {
         match c {
             'l' => self.goto(Page::Library),
+            'S' => self.switch_service(),
             's' => self.open_search(),
             'y' => self.open_library_kind(crate::data::Kind::Liked),
             'r' => self.open_library_kind(crate::data::Kind::Recent),
@@ -1138,6 +1155,127 @@ mod tests {
             1,
             "the home list is filled too"
         );
+    }
+
+    /// A worker stand-in: the app's end of its channels, and the test's.
+    fn fake(
+        service: Service,
+    ) -> (
+        Live,
+        tokio::sync::mpsc::UnboundedReceiver<Command>,
+        std::sync::mpsc::Sender<Update>,
+    ) {
+        let (commands, command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (update_tx, updates) = std::sync::mpsc::channel();
+        let live = Live {
+            service,
+            commands,
+            updates,
+        };
+        (live, command_rx, update_tx)
+    }
+
+    fn sent(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Command>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(c) = rx.try_recv() {
+            out.push(match c {
+                Command::SetPlaying(on) => format!("play {on}"),
+                Command::Active(on) => format!("active {on}"),
+                Command::Quit(done) => {
+                    let _ = done.send(());
+                    "quit".into()
+                }
+                _ => "other".into(),
+            });
+        }
+        out
+    }
+
+    #[test]
+    fn switching_services_trades_their_whole_state() {
+        let (spotify, mut spotify_rx, _spotify_tx) = fake(Service::Spotify);
+        let mut app = App::new(Lang::En, Mode::Dark, Model::default(), Some(spotify));
+        app.apply(playing("spotify:track:a"));
+        app.page = Page::Library;
+        assert!(app.playing);
+
+        let started = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let ytm_rx = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let ytm_tx = std::rc::Rc::new(std::cell::RefCell::new(None));
+        {
+            let (started, ytm_rx, ytm_tx) = (started.clone(), ytm_rx.clone(), ytm_tx.clone());
+            app.spawn = Some(Box::new(move |service| {
+                started.borrow_mut().push(service);
+                let (live, rx, tx) = fake(service);
+                *ytm_rx.borrow_mut() = Some(rx);
+                *ytm_tx.borrow_mut() = Some(tx);
+                Ok(live)
+            }));
+        }
+
+        app.on_key(key(KeyCode::Char('g')));
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(*started.borrow(), [Service::YtMusic]);
+        assert_eq!(
+            sent(&mut spotify_rx),
+            ["play false", "active false"],
+            "Spotify pauses and rests"
+        );
+        let mut ytm_commands = ytm_rx.borrow_mut().take().unwrap();
+        assert_eq!(sent(&mut ytm_commands), ["active true"]);
+        assert_eq!(app.service, Service::YtMusic);
+        assert!(
+            app.model.now.is_none(),
+            "YouTube Music starts from its own, empty state"
+        );
+        assert_eq!(app.page, Page::Home);
+        assert_eq!(app.notice.as_deref(), Some("● YouTube Music"));
+
+        // YouTube Music's updates land in its state.
+        let ytm_updates = ytm_tx.borrow_mut().take().unwrap();
+        ytm_updates.send(playing("ytm:track:y")).unwrap();
+        app.pump();
+        assert_eq!(
+            app.model.now.as_ref().map(|n| n.id.as_str()),
+            Some("ytm:track:y")
+        );
+
+        // Back: Spotify's track and page are where they were, paused; nothing restarts.
+        app.on_key(key(KeyCode::Char('g')));
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(started.borrow().len(), 1, "the worker started once");
+        assert_eq!(sent(&mut ytm_commands), ["play false", "active false"]);
+        assert_eq!(sent(&mut spotify_rx), ["active true"]);
+        assert_eq!(app.service, Service::Spotify);
+        assert_eq!(
+            app.model.now.as_ref().map(|n| n.id.as_str()),
+            Some("spotify:track:a")
+        );
+        assert_eq!(app.page, Page::Library);
+        assert!(!app.playing);
+
+        // Closing tells both.
+        let waits = app.shutdown();
+        assert_eq!(waits.len(), 2);
+        assert_eq!(sent(&mut spotify_rx), ["quit"]);
+        assert_eq!(sent(&mut ytm_commands), ["quit"]);
+    }
+
+    #[test]
+    fn a_service_that_cannot_start_keeps_the_screen() {
+        let (spotify, mut spotify_rx, _tx) = fake(Service::Spotify);
+        let mut app = App::new(Lang::En, Mode::Dark, Model::default(), Some(spotify));
+        app.apply(playing("spotify:track:a"));
+        app.spawn = Some(Box::new(|_| Err("not signed in".into())));
+        app.on_key(key(KeyCode::Char('g')));
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.service, Service::Spotify);
+        assert!(
+            app.playing,
+            "nothing was paused for a switch that did not happen"
+        );
+        assert!(sent(&mut spotify_rx).is_empty());
+        assert_eq!(app.notice.as_deref(), Some("not signed in"));
     }
 
     #[test]

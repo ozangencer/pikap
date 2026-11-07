@@ -76,7 +76,7 @@ pub struct Strings {
     pub leader_title: &'static str,
     pub leader_close: &'static str,
     /// Labels for `app::LEADER_KEYS`, same order.
-    pub leader_labels: [&'static str; 12],
+    pub leader_labels: [&'static str; 13],
     /// Status line hints as (key, label), per page.
     pub hints: &'static [(&'static str, &'static str)],
     pub hints_library: &'static [(&'static str, &'static str)],
@@ -227,6 +227,7 @@ pub static TR: Strings = Strings {
         "made for you",
         "cihaz seç",
         "sahne modu",
+        "servis değiştir",
     ],
     hints: &[
         ("/", "ara"),
@@ -474,6 +475,7 @@ pub static EN: Strings = Strings {
         "made for you",
         "pick device",
         "stage mode",
+        "switch service",
     ],
     hints: &[
         ("/", "search"),

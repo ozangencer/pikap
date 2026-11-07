@@ -98,6 +98,8 @@ struct State {
     mpv: tokio::sync::Mutex<Option<Arc<Mpv>>>,
     events: UnboundedSender<Event>,
     queue: Mutex<Queue>,
+    /// The screen shows the other service: no playback reports.
+    resting: std::sync::atomic::AtomicBool,
     /// pikap is closing: nothing may start mpv again.
     quitting: std::sync::atomic::AtomicBool,
     /// A saved track and where to start it, used by the first play after startup.
@@ -144,6 +146,7 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         events,
         queue: Mutex::new(Queue::default()),
         quitting: std::sync::atomic::AtomicBool::new(false),
+        resting: std::sync::atomic::AtomicBool::new(false),
         resume_at: Mutex::new(None),
         loaded: Mutex::new(None),
         in_mpv: Mutex::new(None),
@@ -172,13 +175,25 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         tokio::select! {
             command = commands.recv() => {
                 let Some(command) = command else { break };
+                if let Command::Active(on) = command {
+                    state.resting.store(!on, std::sync::atomic::Ordering::Relaxed);
+                    if on {
+                        state.send_queue();
+                        state.send_playback().await;
+                    }
+                    continue;
+                }
                 state.handle(command).await;
                 if state.quitting.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
             }
             Some(event) = event_rx.recv() => state.on_event(event).await,
-            _ = tick.tick() => state.send_playback().await,
+            _ = tick.tick() => {
+                if !state.resting.load(std::sync::atomic::Ordering::Relaxed) {
+                    state.send_playback().await;
+                }
+            }
         }
     }
 }

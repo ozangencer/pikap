@@ -806,6 +806,29 @@ mod tests {
         assert!(!text.contains("Spotify"));
     }
 
+    /// Every `g` key shows in the panel, wide and narrow.
+    #[test]
+    fn leader_panel_shows_every_key() {
+        for (w, h) in [(160, 45), (60, 40)] {
+            let mut app = App::new(Lang::En, Mode::Dark, crate::data::demo(), None);
+            app.leader = true;
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal
+                .draw(|f| drop(super::super::render(f, &app, CellPx { w: 8, h: 16 }, false)))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            for label in app.s.leader_labels {
+                assert!(text.contains(label), "{w}x{h}: {label}");
+            }
+        }
+    }
+
     /// The narrow layout follows the tab keys instead of always showing the list.
     #[test]
     fn narrow_layout_shows_the_chosen_tab() {

@@ -48,7 +48,8 @@ struct Args {
     auth: bool,
     force: bool,
     demo: bool,
-    ytmusic: bool,
+    /// The service to show, when named (`--backend`, `PIKAP_BACKEND`).
+    backend: Option<backend::Service>,
     /// The service `auth` signs in to, when named.
     service: Option<backend::Service>,
     lang: Option<Lang>,
@@ -61,20 +62,13 @@ fn parse_args() -> Result<Args> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "auth" => args.auth = true,
-            "spotify" | "ytmusic" if args.auth => {
-                args.service = backend_is_ytmusic(&arg).map(|ytm| {
-                    if ytm {
-                        backend::Service::YtMusic
-                    } else {
-                        backend::Service::Spotify
-                    }
-                });
-            }
+            "spotify" | "ytmusic" if args.auth => args.service = backend::Service::from_key(&arg),
             "--force" => args.force = true,
             "--demo" => args.demo = true,
             "--backend" => {
                 let v = it.next().unwrap_or_default();
-                args.ytmusic = backend_is_ytmusic(&v).ok_or_else(|| anyhow!("--backend: {v}?"))?;
+                args.backend =
+                    Some(backend::Service::from_key(&v).ok_or_else(|| anyhow!("--backend: {v}?"))?);
             }
             "--lang" => {
                 let v = it.next().unwrap_or_default();
@@ -110,10 +104,10 @@ fn parse_args() -> Result<Args> {
             other => bail!("unknown argument: {other}\n\n{USAGE}"),
         }
     }
-    if !args.ytmusic
-        && let Ok(v) = std::env::var("PIKAP_BACKEND")
-    {
-        args.ytmusic = backend_is_ytmusic(&v).unwrap_or(false);
+    if args.backend.is_none() {
+        args.backend = std::env::var("PIKAP_BACKEND")
+            .ok()
+            .and_then(|v| backend::Service::from_key(&v));
     }
     if args.theme.is_none() {
         args.theme = std::env::var("PIKAP_THEME")
@@ -137,12 +131,35 @@ fn ask_service(s: &Strings) -> Result<backend::Service> {
     })
 }
 
-fn backend_is_ytmusic(name: &str) -> Option<bool> {
-    match name {
-        "spotify" => Some(false),
-        "ytmusic" | "youtube-music" | "ytm" => Some(true),
-        _ => None,
-    }
+/// Where the service last shown is kept, so the next pikap opens on it.
+fn last_service_path() -> std::path::PathBuf {
+    config::cache_dir().join("service")
+}
+
+fn last_service() -> Option<backend::Service> {
+    let text = std::fs::read_to_string(last_service_path()).ok()?;
+    backend::Service::from_key(&text)
+}
+
+fn remember_service(service: backend::Service) {
+    let _ = std::fs::create_dir_all(config::cache_dir());
+    let _ = std::fs::write(last_service_path(), service.key());
+}
+
+/// Starts a service's worker. Spotify needs its sign-in; YouTube Music works without.
+fn spawn_service(service: backend::Service, s: &Strings) -> Result<Live, String> {
+    let live = match service {
+        backend::Service::YtMusic => start_worker(service, ytmusic::worker::run),
+        backend::Service::Spotify => {
+            let cfg = config::load().map_err(|_| s.need_auth.to_owned())?;
+            let token = auth::load_token().ok_or_else(|| s.need_auth.to_owned())?;
+            let api = Arc::new(Api::new(http().map_err(|e| e.to_string())?, cfg, token));
+            start_worker(service, move |commands, updates| {
+                worker::run(api, commands, updates)
+            })
+        }
+    };
+    live.map_err(|e| format!("{e:#}"))
 }
 
 fn http() -> Result<reqwest::Client> {
@@ -158,9 +175,8 @@ fn main() -> Result<()> {
     let lang = args.lang.unwrap_or_else(Lang::detect);
     let s = lang.strings();
     if args.auth {
-        let service = match args.service {
+        let service = match args.service.or(args.backend) {
             Some(service) => service,
-            None if args.ytmusic => backend::Service::YtMusic,
             None => ask_service(s)?,
         };
         return match service {
@@ -171,30 +187,30 @@ fn main() -> Result<()> {
 
     let (model, live) = if args.demo {
         (data::demo(), None)
-    } else if args.ytmusic {
-        let live = start_worker(backend::Service::YtMusic, ytmusic::worker::run)?;
-        (data::Model::default(), Some(live))
     } else {
-        if !config::path().exists() {
-            eprintln!("{}", s.need_auth);
-            std::process::exit(1);
+        let service = args
+            .backend
+            .or_else(last_service)
+            .unwrap_or(backend::Service::Spotify);
+        match spawn_service(service, s) {
+            Ok(live) => (data::Model::default(), Some(live)),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
         }
-        let cfg = config::load()?;
-        let Some(token) = auth::load_token() else {
-            eprintln!("{}", s.need_auth);
-            std::process::exit(1);
-        };
-        let api = Arc::new(Api::new(http()?, cfg, token));
-        let live = start_worker(backend::Service::Spotify, move |commands, updates| {
-            worker::run(api, commands, updates)
-        })?;
-        (data::Model::default(), Some(live))
     };
 
     let mut terminal = ratatui::init();
     let mode = args.theme.unwrap_or_else(Mode::detect);
     let graphics = term::graphics_enabled();
+    let demo = live.is_none();
     let mut app = App::new(lang, mode, model, live);
+    if !demo {
+        app.spawn = Some(Box::new(move |service| spawn_service(service, s)));
+        app.remember_service = Some(Box::new(remember_service));
+        remember_service(app.service);
+    }
     app.graphics = graphics;
     if !graphics {
         app.notice = Some(s.no_graphics.to_owned());
@@ -344,7 +360,7 @@ fn run(terminal: &mut DefaultTerminal, mut app: App, graphics: bool) -> Result<(
                 Event::Key(key) if key.kind == KeyEventKind::Press => match app.on_key(key) {
                     Flow::Quit => {
                         // YouTube Music plays through mpv: closing pikap stops it.
-                        if let Some(done) = app.shutdown() {
+                        for done in app.shutdown() {
                             let _ = done.recv_timeout(Duration::from_secs(1));
                         }
                         break;
