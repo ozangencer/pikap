@@ -99,6 +99,10 @@ pub struct LibraryIndex {
     pub made_for_you: Vec<Entry>,
     pub playlists: Vec<Entry>,
     pub albums: Vec<Entry>,
+    /// The liked songs list where the service has one of its own (YouTube Music);
+    /// Spotify's is built from the user id.
+    #[serde(default)]
+    pub liked: Option<String>,
     /// How long a part that could not load (and had no saved copy) is on hold.
     #[serde(skip)]
     pub held: Option<Duration>,
@@ -106,7 +110,9 @@ pub struct LibraryIndex {
 
 impl LibraryIndex {
     pub fn liked_uri(&self) -> String {
-        format!("spotify:user:{}:collection", self.user)
+        self.liked
+            .clone()
+            .unwrap_or_else(|| format!("spotify:user:{}:collection", self.user))
     }
 
     pub fn playlist_mut(&mut self, uri: &str) -> Option<&mut Entry> {

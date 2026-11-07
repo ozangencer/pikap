@@ -826,6 +826,7 @@ mod tests {
             ..Entry::new(Kind::Playlist, uri, uri)
         };
         app.model.library = Some(LibraryIndex {
+            liked: None,
             user: "u".into(),
             made_for_you: vec![list("spotify:playlist:mfy", false)],
             playlists: vec![list("spotify:playlist:mine", true)],

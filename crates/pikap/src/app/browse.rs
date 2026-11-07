@@ -461,7 +461,7 @@ impl App {
         let in_open = |o: &Opened| {
             self.opened_rows(o)
                 .get(o.selected)
-                .filter(|t| t.uri.starts_with("spotify:track:"))
+                .filter(|t| crate::backend::is_track(&t.uri))
                 .cloned()
         };
         match self.page {
@@ -579,7 +579,7 @@ impl App {
         // Headings and "show more" rows are not tracks.
         let uris = rows[selected..]
             .iter()
-            .filter(|r| r.uri.starts_with("spotify:"))
+            .filter(|r| crate::backend::is_item(&r.uri))
             .map(|r| r.uri.clone())
             .collect();
         let context = match entry.kind {
@@ -656,7 +656,7 @@ impl App {
         } else {
             self.page_track()
         };
-        row.filter(|t| t.uri.starts_with("spotify:track:"))
+        row.filter(|t| crate::backend::is_track(&t.uri))
             .or_else(|| {
                 self.model.now.as_ref().map(|n| Track {
                     uri: n.id.clone(),
@@ -665,7 +665,7 @@ impl App {
                     duration: n.duration,
                 })
             })
-            .filter(|t| t.uri.starts_with("spotify:track:"))
+            .filter(|t| crate::backend::is_track(&t.uri))
     }
 
     /// The selected track row of a page with nothing opened on it.
@@ -801,7 +801,7 @@ impl App {
             Page::Home => self.tab_rows().get(self.selected).cloned(),
             _ => self.selected_track(),
         };
-        if let Some(track) = track.filter(|t| t.uri.starts_with("spotify:track:")) {
+        if let Some(track) = track.filter(|t| crate::backend::is_track(&t.uri)) {
             self.popup = Some(Popup::Remove {
                 playlist: list,
                 track,

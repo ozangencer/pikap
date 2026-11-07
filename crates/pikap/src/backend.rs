@@ -12,6 +12,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::data::{Entry, Kind, LibraryIndex, NowPlaying, SearchResults, Track};
 
+/// Whether a URI names a single track (not an episode, list or heading).
+pub fn is_track(uri: &str) -> bool {
+    uri.starts_with("spotify:track:") || uri.starts_with("ytm:track:")
+}
+
+/// Whether a row is real content rather than a heading or a "show more" row.
+pub fn is_item(uri: &str) -> bool {
+    uri.starts_with("spotify:") || uri.starts_with("ytm:")
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
     pub uri: String,

@@ -366,6 +366,7 @@ async fn library_index(api: &Api, user: String, saved: Option<&LibraryIndex>) ->
     };
     LibraryIndex {
         user,
+        liked: None,
         made_for_you,
         playlists,
         albums,

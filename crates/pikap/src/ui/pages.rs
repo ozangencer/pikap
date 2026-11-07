@@ -687,6 +687,7 @@ mod tests {
             ..Entry::new(Kind::Playlist, format!("spotify:playlist:{name}"), name)
         };
         app.model.library = Some(LibraryIndex {
+            liked: None,
             user: "u".into(),
             made_for_you: vec![
                 list("Daily Mix 1", 50, false),

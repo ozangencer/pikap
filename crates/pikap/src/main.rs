@@ -10,6 +10,7 @@ mod spotify;
 mod term;
 mod theme;
 mod ui;
+mod ytmusic;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,10 +30,12 @@ use theme::Mode;
 const FRAME: Duration = Duration::from_millis(50);
 
 const USAGE: &str =
-    "pikap [auth [--force]] [--lang tr|en] [--theme auto|dark|light] [--demo] [--check-terminal] [--version]
+    "pikap [auth [--force]] [--backend spotify|ytmusic] [--lang tr|en] [--theme auto|dark|light] [--demo] [--check-terminal] [--version]
 
   auth     set up and sign in to Spotify (opens the browser): the Web API and librespot
   --force  with auth: sign in again even when already connected
+  --backend  the music service (default: PIKAP_BACKEND, then spotify); YouTube Music
+           plays through mpv and needs mpv and yt-dlp (brew install mpv yt-dlp)
   --lang   UI language (default: PIKAP_LANG, then the system locale)
   --theme  colours for a dark or light terminal (default: PIKAP_THEME, then auto)
   --demo   show the built-in sample screen instead of Spotify
@@ -44,6 +47,7 @@ struct Args {
     auth: bool,
     force: bool,
     demo: bool,
+    ytmusic: bool,
     lang: Option<Lang>,
     theme: Option<Mode>,
 }
@@ -56,6 +60,10 @@ fn parse_args() -> Result<Args> {
             "auth" => args.auth = true,
             "--force" => args.force = true,
             "--demo" => args.demo = true,
+            "--backend" => {
+                let v = it.next().unwrap_or_default();
+                args.ytmusic = backend_is_ytmusic(&v).ok_or_else(|| anyhow!("--backend: {v}?"))?;
+            }
             "--lang" => {
                 let v = it.next().unwrap_or_default();
                 args.lang = Some(Lang::parse(&v).ok_or_else(|| anyhow!("--lang: {v}?"))?);
@@ -90,12 +98,25 @@ fn parse_args() -> Result<Args> {
             other => bail!("unknown argument: {other}\n\n{USAGE}"),
         }
     }
+    if !args.ytmusic
+        && let Ok(v) = std::env::var("PIKAP_BACKEND")
+    {
+        args.ytmusic = backend_is_ytmusic(&v).unwrap_or(false);
+    }
     if args.theme.is_none() {
         args.theme = std::env::var("PIKAP_THEME")
             .ok()
             .and_then(|v| Mode::parse(&v));
     }
     Ok(args)
+}
+
+fn backend_is_ytmusic(name: &str) -> Option<bool> {
+    match name {
+        "spotify" => Some(false),
+        "ytmusic" | "youtube-music" | "ytm" => Some(true),
+        _ => None,
+    }
 }
 
 fn http() -> Result<reqwest::Client> {
@@ -116,6 +137,9 @@ fn main() -> Result<()> {
 
     let (model, live) = if args.demo {
         (data::demo(), None)
+    } else if args.ytmusic {
+        let live = start_worker("ytmusic", ytmusic::worker::run)?;
+        (data::Model::default(), Some(live))
     } else {
         if !config::path().exists() {
             eprintln!("{}", s.need_auth);
@@ -127,7 +151,10 @@ fn main() -> Result<()> {
             std::process::exit(1);
         };
         let api = Arc::new(Api::new(http()?, cfg, token));
-        (data::Model::default(), Some(start_worker(api)?))
+        let live = start_worker("spotify", move |commands, updates| {
+            worker::run(api, commands, updates)
+        })?;
+        (data::Model::default(), Some(live))
     };
 
     let mut terminal = ratatui::init();
@@ -216,8 +243,17 @@ fn setup(s: &Strings) -> Result<()> {
     Ok(())
 }
 
-/// Runs the Spotify worker on its own thread and runtime; the UI loop stays synchronous.
-fn start_worker(api: Arc<Api>) -> Result<Live> {
+/// Runs a service's worker on its own thread and runtime; the UI loop stays synchronous.
+fn start_worker<F, Fut>(name: &str, worker: F) -> Result<Live>
+where
+    F: FnOnce(
+            tokio::sync::mpsc::UnboundedReceiver<backend::Command>,
+            std::sync::mpsc::Sender<backend::Update>,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
     let (commands, command_rx) = tokio::sync::mpsc::unbounded_channel();
     let (update_tx, updates) = std::sync::mpsc::channel();
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -225,8 +261,8 @@ fn start_worker(api: Arc<Api>) -> Result<Live> {
         .enable_all()
         .build()?;
     std::thread::Builder::new()
-        .name("spotify".into())
-        .spawn(move || runtime.block_on(worker::run(api, command_rx, update_tx)))?;
+        .name(name.into())
+        .spawn(move || runtime.block_on(worker(command_rx, update_tx)))?;
     Ok(Live { commands, updates })
 }
 
