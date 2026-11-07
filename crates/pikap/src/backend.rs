@@ -138,6 +138,8 @@ pub struct Playback {
     pub device: String,
     pub volume: Option<u8>,
     pub playing: bool,
+    /// The track is chosen but not playing yet (YouTube Music resolves its stream).
+    pub loading: bool,
     pub position: Duration,
     pub shuffle: bool,
     /// 0 off, 1 context, 2 track.

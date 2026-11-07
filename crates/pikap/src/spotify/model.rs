@@ -308,6 +308,7 @@ impl From<Playback> for backend::Playback {
             device: p.device.name,
             volume: p.device.volume_percent,
             playing: p.is_playing,
+            loading: false,
             position: Duration::from_millis(p.progress_ms.unwrap_or(0)),
             shuffle: p.shuffle_state,
             repeat: match p.repeat_state.as_str() {

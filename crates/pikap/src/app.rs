@@ -59,6 +59,8 @@ pub struct App {
     pub selected: usize,
     pub leader: bool,
     pub playing: bool,
+    /// The chosen track is still loading.
+    pub loading: bool,
     pub notice: Option<String>,
     pub quota: Quota,
     /// False until the first playback poll answers, so startup does not flash "nothing
@@ -104,6 +106,7 @@ impl App {
         Self {
             service: live.as_ref().map_or(Service::Spotify, |l| l.service),
             playing: live.is_none(),
+            loading: false,
             position: if live.is_none() {
                 Duration::from_secs(88)
             } else {
@@ -208,6 +211,7 @@ impl App {
             Update::Playback(None) => {
                 self.model.now = None;
                 self.playing = false;
+                self.loading = false;
             }
             Update::Playback(Some(playback)) => self.apply_playback(*playback),
             Update::Queue(items) => {
@@ -333,6 +337,7 @@ impl App {
         self.model.shuffle = playback.shuffle;
         self.model.repeat = playback.repeat;
         self.playing = playback.playing;
+        self.loading = playback.loading;
         if !held(self.hold_position, self.pending_seek) {
             self.position = playback.position;
         }

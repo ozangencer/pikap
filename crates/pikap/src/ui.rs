@@ -388,6 +388,8 @@ fn wave_and_times(f: &mut Frame, app: &App, area: Rect) {
             app.s.shuffle[usize::from(app.model.shuffle)],
             app.s.repeat[usize::from(app.model.repeat.min(2))]
         )
+    } else if app.loading {
+        app.s.loading.to_owned()
     } else {
         app.s.paused.to_owned()
     };

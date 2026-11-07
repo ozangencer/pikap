@@ -102,8 +102,10 @@ struct State {
     quitting: std::sync::atomic::AtomicBool,
     /// A saved track and where to start it, used by the first play after startup.
     resume_at: Mutex<Option<(String, f64)>>,
-    /// The track mpv was last told to play.
+    /// The track asked for last; its stream may still be resolving.
     loaded: Mutex<Option<String>>,
+    /// The track whose file mpv actually has open.
+    in_mpv: Mutex<Option<String>>,
     urls: Mutex<HashMap<String, (String, Instant)>>,
     /// One resolution per track at a time: a second, simultaneous one makes YouTube
     /// refuse the address the first one returned.
@@ -144,6 +146,7 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         quitting: std::sync::atomic::AtomicBool::new(false),
         resume_at: Mutex::new(None),
         loaded: Mutex::new(None),
+        in_mpv: Mutex::new(None),
         urls: Mutex::default(),
         resolving: Mutex::default(),
         retried: Mutex::new(None),
@@ -447,7 +450,7 @@ impl State {
             }
             Event::EndFile(reason) if reason == "error" => {
                 // Addresses expire or get refused (403): try a fresh one once, then skip.
-                let Some(uri) = self.loaded.lock().ok().and_then(|l| l.clone()) else {
+                let Some(uri) = self.in_mpv.lock().ok().and_then(|l| l.clone()) else {
                     return;
                 };
                 let first_time = self
@@ -470,6 +473,7 @@ impl State {
                 plog!("ytmusic: mpv quit");
                 *self.mpv.lock().await = None;
                 *self.loaded.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                *self.in_mpv.lock().unwrap_or_else(|e| e.into_inner()) = None;
             }
             Event::EndFile(_) => {}
         }
@@ -521,9 +525,28 @@ impl State {
         self.follow(&song);
         let state = self.clone();
         tokio::spawn(async move {
+            // The old track must not play on (or speak for the new one) meanwhile.
+            let stale = state
+                .in_mpv
+                .lock()
+                .ok()
+                .and_then(|mut m| m.take_if(|m| *m != uri));
+            if stale.is_some()
+                && let Ok((mpv, _)) = state.mpv().await
+            {
+                let _ = mpv.command(json!(["stop"])).await;
+            }
+            state.send_playback().await;
             let url = match state.stream_url(&uri).await {
                 Ok(url) => url,
-                Err(err) => return state.report(&err),
+                Err(err) => {
+                    // Not loading any more; the track shows as stopped.
+                    if let Ok(mut loaded) = state.loaded.lock() {
+                        loaded.take_if(|l| *l == uri);
+                    }
+                    state.send_playback().await;
+                    return state.report(&err);
+                }
             };
             let still = state
                 .loaded
@@ -554,6 +577,7 @@ impl State {
             if let Err(err) = loaded.await {
                 return state.report(&err);
             }
+            *state.in_mpv.lock().unwrap_or_else(|e| e.into_inner()) = Some(uri.clone());
             state.send_playback().await;
             state.prefetch();
         });
@@ -675,14 +699,15 @@ impl State {
             let _ = self.ui.send(Update::Playback(None));
             return;
         };
-        let loaded = self
-            .loaded
-            .lock()
-            .is_ok_and(|l| l.as_deref() == Some(song.info.uri.as_str()));
+        let uri = song.info.uri.as_str();
+        let asked = self.loaded.lock().is_ok_and(|l| l.as_deref() == Some(uri));
+        // Only mpv's own file speaks for the track: while the next one resolves, mpv may
+        // still hold the last one.
+        let open = self.in_mpv.lock().is_ok_and(|m| m.as_deref() == Some(uri));
         let idle = self.get_bool("idle-active").await.unwrap_or(true);
         let paused = self.get_bool("pause").await.unwrap_or(true);
         // Right after a load mpv has no position yet: still loading, not playing at 0.
-        let position = if loaded && !idle {
+        let position = if open && !idle {
             self.get_f64("time-pos").await
         } else {
             None
@@ -699,6 +724,7 @@ impl State {
             device: "mpv".into(),
             volume,
             playing: live && !paused,
+            loading: asked && !live,
             position: Duration::from_secs_f64(position.max(0.0)),
             shuffle,
             repeat,
@@ -799,7 +825,13 @@ impl State {
                             json!({ "playlistId": list_id, "isAudioOnly": true }),
                         )
                         .await?;
-                    (String::new(), parse::songs(&answer))
+                    let songs = parse::songs(&answer);
+                    // An empty name would read as the liked songs on screen.
+                    let name = songs
+                        .first()
+                        .map(|s| format!("{} Radio", s.info.name))
+                        .unwrap_or_else(|| "Radio".into());
+                    (name, songs)
                 } else {
                     let first = client.browse(&format!("VL{list_id}")).await?;
                     let (name, mut songs) = parse::playlist(&first);
@@ -1282,6 +1314,7 @@ impl State {
         let idle = self.get_bool("idle-active").await.unwrap_or(true);
         if running && !idle {
             *self.loaded.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.info.uri.clone());
+            *self.in_mpv.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.info.uri.clone());
         } else {
             // Resolving takes seconds; start now so pressing play is instant.
             let (state, uri) = (self.clone(), current.info.uri.clone());
@@ -1483,6 +1516,34 @@ mod live {
             cmd.send(Command::PlayTrack("ytm:track:q1bTAcMAQDc".into()))
                 .unwrap();
             drain("play", 16, false);
+            // A track nobody resolved yet: it loads for seconds, and meanwhile neither it
+            // nor the old track may show as playing.
+            cmd.send(Command::PlayTrack("ytm:track:6KjVYeQ9SRw".into()))
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(3);
+            let mut seen = 0;
+            while Instant::now() < until {
+                while let Ok(u) = updates.try_recv() {
+                    if let Update::Playback(Some(p)) = u {
+                        seen += 1;
+                        // The old file's state must never speak for the new track:
+                        // playing means freshly started, otherwise it is loading.
+                        if p.now
+                            .as_ref()
+                            .is_some_and(|n| n.id == "ytm:track:6KjVYeQ9SRw")
+                        {
+                            if p.playing {
+                                assert!(p.position < Duration::from_millis(3500), "fresh start");
+                            } else {
+                                assert!(p.loading, "the new track shows as loading");
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            println!("loading checked over {seen} updates");
+            drain("dracula", 12, false);
             cmd.send(Command::SeekTo(60_000)).unwrap();
             drain("seek", 2, true);
             cmd.send(Command::Next).unwrap();

@@ -231,6 +231,11 @@ fn collect_songs(v: &Value, out: &mut Vec<Song>) {
                 let song = match k.as_str() {
                     "musicResponsiveListItemRenderer" => list_row(child),
                     "playlistPanelVideoRenderer" => panel_row(child),
+                    // A song with its music video as the "counterpart" (the Song/Video
+                    // switch): only the song.
+                    "playlistPanelVideoWrapperRenderer" => {
+                        panel_row(&child["primaryRenderer"]["playlistPanelVideoRenderer"])
+                    }
                     _ => {
                         collect_songs(child, out);
                         continue;
@@ -515,6 +520,24 @@ mod tests {
         assert_eq!(s.info.artist_line(), "Gorillaz, De La Soul");
         assert_eq!(s.year, Some(2005));
         assert_eq!(s.info.duration, Duration::from_secs(223));
+    }
+
+    #[test]
+    fn a_song_and_its_video_count_once() {
+        let panel = |id: &str, artist: Value| {
+            json!({ "playlistPanelVideoRenderer": {
+            "videoId": id,
+            "title": { "runs": [run("Self Aware")] },
+            "longBylineText": { "runs": [artist] } } })
+        };
+        let wrapped = json!({ "contents": [{ "playlistPanelVideoWrapperRenderer": {
+            "primaryRenderer": panel("song", link("Temper City", "UCt", "ARTIST")),
+            "counterpart": [{ "counterpartRenderer": panel("video", run("Temper City")) }]
+        }}]});
+        let found = songs(&wrapped);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].info.uri, "ytm:track:song");
+        assert_eq!(found[0].info.artist_line(), "Temper City");
     }
 
     #[test]
