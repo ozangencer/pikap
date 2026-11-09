@@ -89,13 +89,18 @@ impl Client {
     /// with a "looking for what you've liked?" message instead of the playlist grid.
     pub async fn has_account(&self) -> Result<bool> {
         let library = self.browse("FEmusic_liked_playlists").await?;
-        Ok(library.to_string().contains("\"gridRenderer\""))
+        Ok(opened_account(&library))
     }
 
     pub async fn browse(&self, id: &str) -> Result<Value> {
         self.call("browse", serde_json::json!({ "browseId": id }))
             .await
     }
+}
+
+/// Whether the `FEmusic_liked_playlists` answer is a signed-in library.
+pub fn opened_account(library: &Value) -> bool {
+    library.to_string().contains("\"gridRenderer\"")
 }
 
 /// Google resets ytmapi-rs's (old Firefox) user agent over HTTP/2; HTTP/1 answers.
@@ -143,5 +148,20 @@ impl PostQuery for Raw {
     }
     fn path(&self) -> &str {
         &self.path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sign_in_prompt_is_not_an_account() {
+        let signed_out = serde_json::json!({ "contents": { "messageRenderer": {
+            "text": { "runs": [{ "text": "Looking for what you’ve liked?" }] }
+        }}});
+        let signed_in = serde_json::json!({ "contents": { "gridRenderer": { "items": [] } } });
+        assert!(!opened_account(&signed_out));
+        assert!(opened_account(&signed_in));
     }
 }

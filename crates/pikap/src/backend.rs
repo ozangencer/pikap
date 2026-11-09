@@ -142,6 +142,8 @@ pub enum Quota {
 pub enum Problem {
     SignInToLike,
     SignInToEdit,
+    /// The saved cookie no longer opens an account: Google ended that session.
+    SignedOut,
     /// A program YouTube Music plays through is missing: `mpv` or `yt-dlp`.
     Missing(&'static str),
     CannotRemove,
@@ -158,6 +160,7 @@ impl std::fmt::Display for Problem {
         match self {
             Self::SignInToLike => write!(f, "sign in to like songs"),
             Self::SignInToEdit => write!(f, "sign in to edit playlists"),
+            Self::SignedOut => write!(f, "the saved cookie no longer signs in"),
             Self::Missing(tool) => write!(f, "{tool} is not installed"),
             Self::CannotRemove => write!(f, "removing from a playlist is not there yet"),
             Self::NotLoaded => write!(f, "that track is not loaded yet"),

@@ -410,6 +410,9 @@ pub static TR: Strings = Strings {
         Problem::SignInToEdit => {
             "Playlist düzenlemek için YouTube Music'e giriş yap: pikap auth ytmusic".into()
         }
+        Problem::SignedOut => {
+            "YouTube Music oturumu kapanmış, yeniden giriş yap: pikap auth ytmusic".into()
+        }
         Problem::Missing(tool) => format!("{tool} kurulu değil: brew install {tool}"),
         Problem::CannotRemove => "YouTube Music'te playlist'ten çıkarma henüz yok".into(),
         Problem::NotLoaded => "Bu şarkı henüz yüklenmedi, birazdan tekrar dene".into(),
@@ -669,6 +672,9 @@ pub static EN: Strings = Strings {
         Problem::SignInToEdit => {
             "Sign in to YouTube Music to edit playlists: pikap auth ytmusic".into()
         }
+        Problem::SignedOut => {
+            "YouTube Music signed you out; sign in again: pikap auth ytmusic".into()
+        }
         Problem::Missing(tool) => format!("{tool} is not installed: brew install {tool}"),
         Problem::CannotRemove => {
             "Removing from a playlist is not there yet on YouTube Music".into()
@@ -816,6 +822,7 @@ mod tests {
         let problems = [
             Problem::SignInToLike,
             Problem::SignInToEdit,
+            Problem::SignedOut,
             Problem::Missing("mpv"),
             Problem::CannotRemove,
             Problem::NotLoaded,

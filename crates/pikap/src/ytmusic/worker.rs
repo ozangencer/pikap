@@ -33,6 +33,10 @@ use crate::spotify::config;
 const TICK: Duration = Duration::from_secs(1);
 /// Stream addresses stay valid for about six hours.
 const URL_LIFE: Duration = Duration::from_secs(4 * 3600);
+/// The yt-dlp client asked once the default one's addresses are refused (403).
+const FALLBACK_CLIENT: &str = "youtube:player_client=web_music";
+/// Tracks that needed the fallback before every resolution uses it.
+const REFUSALS: u32 = 2;
 /// Tracks resolved ahead of the playing one.
 const PREFETCH: usize = 2;
 /// After a load, how often and how long mpv is asked whether the sound started.
@@ -101,6 +105,8 @@ struct State {
     cookie: Option<String>,
     /// The cookie as a Netscape file, for yt-dlp.
     cookie_file: Option<PathBuf>,
+    /// The cookie is there but Google no longer opens an account with it.
+    signed_out: std::sync::atomic::AtomicBool,
     http: reqwest::Client,
     client: tokio::sync::Mutex<Option<Arc<Client>>>,
     mpv: tokio::sync::Mutex<Option<Arc<Mpv>>>,
@@ -128,6 +134,8 @@ struct State {
     preparing: tokio::sync::Semaphore,
     /// The track already given a fresh address after mpv could not open it.
     retried: Mutex<Option<String>>,
+    /// How many tracks mpv could not open at the address first resolved.
+    refused: std::sync::atomic::AtomicU32,
     /// Every track seen, by URI, for commands that only name one.
     songs: Mutex<HashMap<String, Song>>,
     lists: Mutex<Lists>,
@@ -150,6 +158,7 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         ui: ui.clone(),
         cookie,
         cookie_file,
+        signed_out: std::sync::atomic::AtomicBool::new(false),
         http: reqwest::Client::builder()
             .user_agent(concat!("pikap/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(15))
@@ -168,6 +177,7 @@ pub async fn run(mut commands: UnboundedReceiver<crate::backend::Command>, ui: S
         urls: Mutex::default(),
         resolving: Mutex::default(),
         retried: Mutex::new(None),
+        refused: std::sync::atomic::AtomicU32::new(0),
         hovered: Mutex::new(None),
         preparing: tokio::sync::Semaphore::new(PREPARING),
         songs: Mutex::default(),
@@ -237,7 +247,14 @@ impl State {
     }
 
     fn signed_in(&self) -> bool {
-        self.cookie.is_some()
+        self.cookie.is_some() && !self.signed_out.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether `uri` resolves through the fallback client: its first address was
+    /// refused, or enough tracks' were that the default client is not worth asking.
+    fn falls_back(&self, uri: &str) -> bool {
+        self.refused.load(std::sync::atomic::Ordering::Relaxed) >= REFUSALS
+            || self.retried.lock().is_ok_and(|r| r.as_deref() == Some(uri))
     }
 
     /// The player, started or found again; `true` when it was already running.
@@ -508,6 +525,16 @@ impl State {
                     urls.remove(&uri);
                 }
                 if first_time {
+                    let refused = self
+                        .refused
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
+                    if refused == REFUSALS
+                        && let Ok(mut urls) = self.urls.lock()
+                    {
+                        // Addresses resolved ahead came from the refused client too.
+                        urls.clear();
+                    }
                     plog!("ytmusic: mpv could not open {uri}, resolving it again");
                     self.play_current();
                 } else {
@@ -1169,6 +1196,10 @@ impl State {
             "--no-warnings",
             "-q",
         ]);
+        let fallback = self.falls_back(uri);
+        if fallback {
+            command.args(["--extractor-args", FALLBACK_CLIENT]);
+        }
         if let Some(file) = &self.cookie_file {
             command.arg("--cookies").arg(file);
         }
@@ -1186,8 +1217,9 @@ impl State {
             ));
         };
         plog!(
-            "ytmusic: resolved {video} in {:.1} s",
-            started.elapsed().as_secs_f64()
+            "ytmusic: resolved {video} in {:.1} s{}",
+            started.elapsed().as_secs_f64(),
+            if fallback { " (fallback client)" } else { "" }
         );
         if let Ok(mut urls) = self.urls.lock() {
             urls.insert(uri.to_owned(), (url.to_owned(), Instant::now()));
@@ -1199,7 +1231,7 @@ impl State {
 
     async fn load_library(self: &Arc<Self>) -> Result<()> {
         let client = self.client().await?;
-        let signed_in = client.signed_in();
+        let mut signed_in = client.signed_in();
         let mut made_for_you = Vec::new();
         match client.browse("FEmusic_home").await {
             Ok(home) => {
@@ -1217,8 +1249,22 @@ impl State {
             Err(err) => plog!("ytmusic home: {err:#}"),
         }
         let (mut playlists, mut albums) = (Vec::new(), Vec::new());
-        if signed_in {
+        let grid = if signed_in {
             let grid = client.browse("FEmusic_liked_playlists").await?;
+            if client::opened_account(&grid) {
+                Some(grid)
+            } else {
+                // Without this the library just reads as empty.
+                signed_in = false;
+                self.signed_out
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                self.report(&Problem::SignedOut.into());
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(grid) = grid {
             playlists = parse::card_entries(&grid)
                 .into_iter()
                 .filter(|e| {
