@@ -191,6 +191,8 @@ pub struct Strings {
     pub ytm_reading: fn(&str) -> String,
     pub ytm_unreadable: fn(&str, &str) -> String,
     pub ytm_full_disk: fn(&str) -> String,
+    pub ytm_keychain: fn(&str, &str) -> String,
+    pub ytm_no_sign_in: fn(&str) -> String,
     pub ytm_paste_instead: &'static str,
     pub ytm_paste_steps: [&'static str; 5],
     pub ytm_paste_prompt: &'static str,
@@ -445,6 +447,19 @@ pub static TR: Strings = Strings {
          \x20 Sistem Ayarları › Gizlilik ve Güvenlik › Tam Disk Erişimi › {terminal}'i aç (panel açılıyor),\n\
          \x20 sonra {terminal}'i yeniden başlatıp şunu çalıştır: pikap auth ytmusic\n\
          İzin yalnızca giriş anında gerekir; pikap girişi kendi dosyasına kaydeder, izni sonra geri alabilirsin."
+        )
+    },
+    ytm_keychain: |browser, entry| {
+        format!(
+            "{browser} çerezleri okundu ama şifreleri çözülemedi: macOS, Keychain'deki \"{entry}\" anahtarını vermedi.\n\
+         \x20 Yeniden çalıştır ve macOS sorduğunda parolanı girip \"Her Zaman İzin Ver\"i seç.\n\
+         \x20 Sormazsa: Anahtar Zinciri Erişimi › \"{entry}\" › Erişim Denetimi'nden izin ver."
+        )
+    },
+    ytm_no_sign_in: |browser| {
+        format!(
+            "{browser} çerezleri okundu ama içlerinde YouTube girişi yok.\n\
+         \x20 {browser} tarayıcısında music.youtube.com'a giriş yap (son kullandığın profilde), sonra: pikap auth ytmusic"
         )
     },
     ytm_paste_instead: "Şimdilik çerezi elle yapıştırmak ister misin? [E/h]: ",
@@ -709,6 +724,19 @@ pub static EN: Strings = Strings {
          \x20 System Settings › Privacy & Security › Full Disk Access › turn on {terminal} (the pane is opening),\n\
          \x20 then restart {terminal} and run: pikap auth ytmusic\n\
          The permission is needed only to sign in; pikap keeps the sign-in in its own file, so you can turn it off after."
+        )
+    },
+    ytm_keychain: |browser, entry| {
+        format!(
+            "{browser}'s cookies were read but could not be decrypted: macOS did not hand over the \"{entry}\" Keychain key.\n\
+         \x20 Run it again and, when macOS asks, enter your password and choose \"Always Allow\".\n\
+         \x20 If it does not ask: Keychain Access › \"{entry}\" › Access Control, and allow it there."
+        )
+    },
+    ytm_no_sign_in: |browser| {
+        format!(
+            "{browser}'s cookies were read, but none of them is a YouTube sign-in.\n\
+         \x20 Sign in on music.youtube.com in {browser} (in the profile you used last), then run: pikap auth ytmusic"
         )
     },
     ytm_paste_instead: "Paste the cookie by hand for now? [Y/n]: ",

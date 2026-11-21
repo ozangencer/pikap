@@ -77,12 +77,18 @@ pub fn sign_in(s: &Strings, force: bool) -> Result<()> {
     let mut cookie = None;
     if let Some((_, key, name)) = picked {
         println!("\n{}", (s.ytm_reading)(name));
-        match from_browser(key) {
+        match from_browser(key)? {
             Ok(found) => cookie = Some(found),
-            Err(err) => {
-                println!("{}\n", (s.ytm_unreadable)(name, &format!("{err:#}")));
-                println!("{}", (s.ytm_full_disk)(&terminal_name()));
-                let _ = Command::new("open").arg(FULL_DISK_ACCESS).status();
+            Err(missed) => {
+                match missed {
+                    Missed::Unreadable(err) => {
+                        println!("{}\n", (s.ytm_unreadable)(name, &err));
+                        println!("{}", (s.ytm_full_disk)(&terminal_name()));
+                        let _ = Command::new("open").arg(FULL_DISK_ACCESS).status();
+                    }
+                    Missed::Locked => println!("{}", (s.ytm_keychain)(name, safe_storage(key))),
+                    Missed::NoSignIn => println!("{}", (s.ytm_no_sign_in)(name)),
+                }
                 if !yes(s.ytm_paste_instead)? {
                     println!("{}", s.ytm_signed_out);
                     return Ok(());
@@ -147,26 +153,71 @@ pub fn header(text: &str) -> Option<String> {
     (has("SAPISID=") && !text.contains('\n')).then(|| text.to_owned())
 }
 
+/// Why the browser gave no sign-in.
+enum Missed {
+    /// yt-dlp could not open the cookie store: macOS keeps the terminal out of it.
+    Unreadable(String),
+    /// The store opened but its cookies could not be decrypted: no Keychain key.
+    Locked,
+    /// The store opened and decrypted, with no YouTube sign-in in it.
+    NoSignIn,
+}
+
 /// Lets yt-dlp read the browser's cookie store and keeps the YouTube ones.
-fn from_browser(browser: &str) -> Result<String> {
+fn from_browser(browser: &str) -> Result<Result<String, Missed>> {
     let dir = config::cache_dir().join("ytmusic");
     std::fs::create_dir_all(&dir)?;
     let file = dir.join("browser-cookies.txt");
     let _ = std::fs::remove_file(&file);
+    // Not quiet: yt-dlp reports cookies it could not decrypt only in its log.
     let out = Command::new("yt-dlp")
         .args(["--cookies-from-browser", browser, "--cookies"])
         .arg(&file)
-        .args(["--skip-download", "--quiet", "--no-warnings", "--simulate"])
+        .args(["--skip-download", "--simulate"])
         .arg(YTM)
         .output()
         .context("yt-dlp is not installed (brew install yt-dlp)")?;
     let jar = std::fs::read_to_string(&file);
     let _ = std::fs::remove_file(&file);
+    let err = String::from_utf8_lossy(&out.stderr);
     let Ok(jar) = jar else {
-        let err = String::from_utf8_lossy(&out.stderr);
-        bail!("{}", err.lines().last().unwrap_or("yt-dlp read no cookies"));
+        let lines = || err.lines().rev();
+        let last = (lines().find(|l| l.starts_with("ERROR:")))
+            .or_else(|| lines().next())
+            .unwrap_or("yt-dlp read no cookies");
+        return Ok(Err(Missed::Unreadable(last.to_owned())));
     };
-    header(&netscape_to_header(&jar)).context("no YouTube sign-in among the browser's cookies")
+    if let Some(cookie) = header(&netscape_to_header(&jar)) {
+        return Ok(Ok(cookie));
+    }
+    let log = format!("{}\n{err}", String::from_utf8_lossy(&out.stdout));
+    Ok(Err(if undecrypted(&log) {
+        Missed::Locked
+    } else {
+        Missed::NoSignIn
+    }))
+}
+
+/// Whether yt-dlp's log says some cookies stayed encrypted (the Keychain gave no key).
+fn undecrypted(log: &str) -> bool {
+    log.lines().any(|l| {
+        l.contains("could not be decrypted")
+            || l.contains("no key found")
+            || l.contains("find-generic-password failed")
+            || l.contains("Possibly the key is wrong")
+    })
+}
+
+/// The Keychain entry holding a Chromium browser's cookie key.
+fn safe_storage(browser: &str) -> &'static str {
+    match browser {
+        "brave" => "Brave Safe Storage",
+        "edge" => "Microsoft Edge Safe Storage",
+        "vivaldi" => "Vivaldi Safe Storage",
+        "opera" => "Opera Safe Storage",
+        "chromium" => "Chromium Safe Storage",
+        _ => "Chrome Safe Storage",
+    }
 }
 
 /// The YouTube cookies of a Netscape cookie file, as one header.
@@ -266,6 +317,18 @@ mod tests {
         );
         assert_eq!(header("https://music.youtube.com"), None);
         assert_eq!(header("SAPISID=x\nsomething else"), None);
+    }
+
+    #[test]
+    fn undecrypted_cookies_are_told_apart() {
+        assert!(undecrypted(
+            "[Cookies] Extracted 412 cookies from chrome (380 could not be decrypted)"
+        ));
+        assert!(undecrypted(
+            "WARNING: cannot decrypt v10 cookies: no key found"
+        ));
+        assert!(undecrypted("WARNING: find-generic-password failed"));
+        assert!(!undecrypted("Extracted 412 cookies from chrome"));
     }
 
     #[test]
